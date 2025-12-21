@@ -7,7 +7,7 @@ export default defineConfig({
   build: {
     rollupOptions: {
       input: {
-        panel: resolve(__dirname, 'index.html'),
+        panel: 'index.html',
       },
       output: {
         entryFileNames: `assets/[name].js`,

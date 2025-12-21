@@ -3,8 +3,10 @@
   import { protoEngine } from '../lib/proto-engine';
   import { t } from '../lib/i18n';
   import JsonTree from './JsonTree.svelte';
+  import ProtoFieldRow from './ProtoFieldRow.svelte';
 
   let activeTab = 'request';
+  let copyFeedback = '';
 
   $: entry = $selectedEntry;
   $: protoDef = entry ? protoEngine.serviceMap.get(entry.method) : null;
@@ -13,6 +15,37 @@
 
   function setTab(tab) {
     activeTab = tab;
+  }
+
+  let showCopyModal = false;
+  let copyText = '';
+
+  function jsonReplacer(key, value) {
+    if (value instanceof Uint8Array) {
+      return `[bytes: ${value.length} bytes]`;
+    }
+    if (typeof value === 'bigint') {
+      return value.toString();
+    }
+    return value;
+  }
+
+  function openCopyModal(data) {
+    try {
+      copyText = JSON.stringify(data, jsonReplacer, 2);
+    } catch (e) {
+      copyText = `Error serializing: ${e.message}`;
+    }
+    showCopyModal = true;
+  }
+
+  function closeCopyModal() {
+    showCopyModal = false;
+    copyText = '';
+  }
+
+  function selectAllText(e) {
+    e.target.select();
   }
 </script>
 
@@ -31,8 +64,8 @@
       {#if activeTab === 'headers'}
         <section>
           <h3>{$t('general')}</h3>
-          <div class="field"><span class="label">Method:</span> <span class="val">{entry.method}</span></div>
-          <div class="field"><span class="label">URL:</span> <span class="val">{entry.url}</span></div>
+          <div class="field"><span class="label">{$t('method')}:</span> <span class="val">{entry.method}</span></div>
+          <div class="field"><span class="label">{$t('url')}:</span> <span class="val">{entry.url}</span></div>
           <div class="field"><span class="label">{$t('status')}:</span> <span class="val">{entry.grpcStatus === 0 ? 'OK (0)' : `Error (${entry.grpcStatus})`}</span></div>
         </section>
         {#if entry.requestHeaders}
@@ -45,6 +78,14 @@
         {/if}
       {:else if activeTab === 'request'}
         <div class="data-view">
+          <div class="data-header">
+            <span>Request Data</span>
+            {#if entry.request}
+              <button class="copy-btn" on:click={() => openCopyModal(entry.request)}>
+                📋 Copy JSON
+              </button>
+            {/if}
+          </div>
           {#if entry.request}
             <JsonTree data={entry.request} />
           {:else}
@@ -53,6 +94,14 @@
         </div>
       {:else if activeTab === 'response'}
         <div class="data-view">
+          <div class="data-header">
+            <span>Response Data</span>
+            {#if entry.response}
+              <button class="copy-btn" on:click={() => openCopyModal(entry.response)}>
+                📋 Copy JSON
+              </button>
+            {/if}
+          </div>
           {#if entry.response}
             <JsonTree data={entry.response} />
           {:else}
@@ -63,23 +112,23 @@
         <div class="proto-view">
           {#if protoDef}
             <div class="msg-section">
-              <h4>Request Message: {protoDef.requestType}</h4>
+              <h4>{$t('request_message')}: {protoDef.requestType}</h4>
               <table class="proto-table">
-                <thead><tr><th>#</th><th>Name</th><th>Type</th></tr></thead>
+                <thead><tr><th>#</th><th>{$t('name')}</th><th>{$t('type')}</th></tr></thead>
                 <tbody>
                   {#each requestMsg?.fields || [] as f}
-                    <tr><td>{f.number}</td><td>{f.name}</td><td>{f.type_name || f.type}</td></tr>
+                    <ProtoFieldRow field={f} />
                   {/each}
                 </tbody>
               </table>
             </div>
             <div class="msg-section">
-              <h4>Response Message: {protoDef.responseType}</h4>
+              <h4>{$t('response_message')}: {protoDef.responseType}</h4>
               <table class="proto-table">
-                <thead><tr><th>#</th><th>Name</th><th>Type</th></tr></thead>
+                <thead><tr><th>#</th><th>{$t('name')}</th><th>{$t('type')}</th></tr></thead>
                 <tbody>
                   {#each responseMsg?.fields || [] as f}
-                    <tr><td>{f.number}</td><td>{f.name}</td><td>{f.type_name || f.type}</td></tr>
+                    <ProtoFieldRow field={f} />
                   {/each}
                 </tbody>
               </table>
@@ -92,6 +141,24 @@
     </div>
   {/if}
 </div>
+
+{#if showCopyModal}
+  <div class="modal-overlay" on:click={closeCopyModal} on:keydown={(e) => e.key === 'Escape' && closeCopyModal()} role="button" tabindex="-1">
+    <div class="modal-content" on:click|stopPropagation role="dialog">
+      <div class="modal-header">
+        <span>Copy JSON</span>
+        <button class="modal-close" on:click={closeCopyModal}>✕</button>
+      </div>
+      <textarea 
+        class="copy-textarea" 
+        readonly 
+        value={copyText}
+        on:focus={selectAllText}
+      ></textarea>
+      <p class="modal-hint">Press Ctrl+C (or Cmd+C) to copy</p>
+    </div>
+  </div>
+{/if}
 
 <style>
   .network-details {
@@ -120,7 +187,7 @@
   .tabs button {
     background: transparent;
     border: none;
-    padding: 12px 16px;
+    padding: 6px 10px;
     font-size: 13px;
     font-weight: 500;
     color: #6b7280;
@@ -145,7 +212,7 @@
   .content {
     flex: 1;
     overflow-y: auto;
-    padding: 16px;
+    padding: 4px 8px;
   }
 
   section {
@@ -180,6 +247,37 @@
 
   .data-view, .proto-view {
     padding: 8px;
+  }
+
+  .data-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 0;
+    border-bottom: 1px solid #f3f4f6;
+    margin-bottom: 12px;
+  }
+
+  .data-header span {
+    font-size: 12px;
+    font-weight: 600;
+    color: #6b7280;
+  }
+
+  .copy-btn {
+    background: #f3f4f6;
+    border: 1px solid #e5e7eb;
+    border-radius: 4px;
+    padding: 4px 10px;
+    font-size: 11px;
+    color: #374151;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .copy-btn:hover {
+    background: #e5e7eb;
+    border-color: #d1d5db;
   }
 
   .no-data {
@@ -218,5 +316,72 @@
     background: #f9fafb;
     font-weight: 600;
     color: #4b5563;
+  }
+
+  .modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+  }
+
+  .modal-content {
+    background: white;
+    border-radius: 8px;
+    width: 90%;
+    max-width: 600px;
+    max-height: 80%;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+  }
+
+  .modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 16px;
+    border-bottom: 1px solid #e5e7eb;
+    font-weight: 600;
+    color: #374151;
+  }
+
+  .modal-close {
+    background: none;
+    border: none;
+    font-size: 16px;
+    color: #9ca3af;
+    cursor: pointer;
+    padding: 4px 8px;
+  }
+
+  .modal-close:hover {
+    color: #374151;
+  }
+
+  .copy-textarea {
+    flex: 1;
+    margin: 12px 16px;
+    padding: 12px;
+    font-family: monospace;
+    font-size: 12px;
+    border: 1px solid #e5e7eb;
+    border-radius: 4px;
+    resize: none;
+    min-height: 200px;
+    background: #f9fafb;
+  }
+
+  .modal-hint {
+    padding: 8px 16px 16px;
+    font-size: 12px;
+    color: #6b7280;
+    text-align: center;
   }
 </style>

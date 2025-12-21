@@ -30,7 +30,7 @@
       </div>
       <div class="meta-col">
         <span class="status">{entry.grpcStatus ?? '-'}</span>
-        <span class="time">{entry.time || '0ms'}</span>
+        <span class="time">{entry.duration ? `${entry.duration}ms` : '0ms'}</span>
       </div>
     </div>
   {/each}
