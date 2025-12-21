@@ -1,0 +1,129 @@
+.network-list {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.network-header {
+  display: flex;
+  align-items: center;
+  height: 24px;
+  border-bottom: var(--divider-border);
+  background: var(--toolbar-bg-color);
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-secondary, #666);
+}
+
+.network-header-cell {
+  padding: 0 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.network-body {
+  flex: 1;
+  overflow: hidden;
+}
+
+.network-row {
+  display: flex;
+  align-items: center;
+  height: 24px;
+  cursor: pointer;
+  font-size: 11px;
+  border-bottom: 1px solid var(--divider-color, #f0f0f0);
+  transition: background-color 0.1s ease;
+}
+
+.network-row:hover {
+  background-color: var(--row-hover-bg, rgba(0, 0, 0, 0.03));
+}
+
+.network-row.selected {
+  background-color: var(--row-selected-bg, #e8f0fe);
+}
+
+.network-row.error {
+  color: var(--error-color, #d93025);
+}
+
+.network-row.error .name-cell {
+  color: inherit;
+}
+
+.network-cell {
+  padding: 0 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.status-cell {
+  width: 24px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.name-cell {
+  flex: 1;
+  min-width: 150px;
+  color: var(--text-primary, #333);
+}
+
+.status-code-cell {
+  width: 50px;
+  flex-shrink: 0;
+  text-align: right;
+}
+
+.duration-cell {
+  width: 70px;
+  flex-shrink: 0;
+  text-align: right;
+  color: var(--text-secondary, #666);
+}
+
+.size-cell {
+  width: 70px;
+  flex-shrink: 0;
+  text-align: right;
+  color: var(--text-secondary, #666);
+}
+
+@media (prefers-color-scheme: dark) {
+  .network-row:hover {
+    background-color: rgba(255, 255, 255, 0.05);
+  }
+
+  .network-row.selected {
+    background-color: rgba(138, 180, 248, 0.2);
+  }
+
+  .network-row.error {
+    color: #f28b82;
+  }
+
+  .name-cell {
+    color: #e8eaed;
+  }
+
+  .duration-cell,
+  .size-cell {
+    color: #9aa0a6;
+  }
+
+  .network-header {
+    color: #9aa0a6;
+  }
+
+  .network-row {
+    border-bottom-color: #3c4043;
+  }
+}
