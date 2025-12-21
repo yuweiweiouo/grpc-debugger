@@ -1,0 +1,37 @@
+{
+  "name": "gRPC Debugger",
+  "version": "1.0.0",
+  "manifest_version": 3,
+  "description": "gRPC-Web network debugger with automatic request interception and protobuf decoding. No frontend integration required.",
+  "author": "魚尾尾",
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  },
+  "devtools_page": "devtools.html",
+  "background": {
+    "service_worker": "background.js"
+  },
+  "permissions": [
+    "debugger",
+    "storage"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["connect-web-interceptor.js", "grpc-web-injector.js"],
+      "matches": ["<all_urls>"]
+    }
+  ],
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content-script.js"],
+      "run_at": "document_start",
+      "all_frames": true
+    }
+  ]
+}
