@@ -89,6 +89,14 @@ export class ProtoEngine {
   decodeMessage(typeName, buffer) {
     const reader = new ProtoReader(buffer);
     const schema = this.findMessage(typeName);
+    
+    if (typeName && !schema) {
+      console.warn(`[ProtoEngine] decodeMessage: No schema found for "${typeName}". schemas.size=${this.schemas.size}`);
+      // Log first 5 schema keys for diagnosis
+      const keys = [...this.schemas.keys()].slice(0, 5);
+      console.debug(`[ProtoEngine] Available schemas (first 5): ${keys.join(', ')}`);
+    }
+    
     return this._decode(schema, reader, typeName);
   }
 
@@ -96,6 +104,14 @@ export class ProtoEngine {
     const result = {};
     const fields = schema ? schema.fields : [];
     const fieldMap = new Map((fields || []).map(f => [f.number, f]));
+
+    // Diagnostic logging
+    if (schema && typeName !== "unknown") {
+      console.debug(`[ProtoEngine] _decode: type=${typeName}, schema.fields.length=${fields?.length || 0}, fieldMap.size=${fieldMap.size}`);
+      if (fieldMap.size === 0 && schema) {
+        console.warn(`[ProtoEngine] Schema exists but no fields! Schema keys:`, Object.keys(schema));
+      }
+    }
 
     if (!schema && typeName && typeName !== "unknown") {
        console.warn(`[ProtoEngine] Unknown message: ${typeName}. Blind decoding.`);
@@ -110,6 +126,12 @@ export class ProtoEngine {
 
       const fieldDef = fieldMap.get(fieldNum);
       const fieldName = fieldDef ? fieldDef.name : `field_${fieldNum}`;
+      
+      // Log when field number not found in schema (indicates version mismatch)
+      if (!fieldDef && schema && typeName !== "unknown") {
+        const schemaFieldNums = [...fieldMap.keys()].join(',');
+        console.debug(`[ProtoEngine] Field ${fieldNum} not in schema for ${typeName}. Schema has fields: [${schemaFieldNums}]`);
+      }
       
       let value;
 

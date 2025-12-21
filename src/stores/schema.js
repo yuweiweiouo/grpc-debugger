@@ -6,26 +6,49 @@ export const services = writable([]);
 export const reflectionStatus = writable(null); // 'loading' | 'success' | 'failed' | null
 export const reflectedServers = new Set(); // To avoid duplicate auto-reflections
 
+// Track pending reflection promises to avoid duplicate requests
+const pendingReflections = new Map();
+
 export async function tryAutoReflection(url) {
-  if (!url) return;
+  if (!url) return false;
   
   try {
     const origin = new URL(url).origin;
-    if (reflectedServers.has(origin)) return;
     
-    reflectedServers.add(origin);
-    reflectionStatus.set('loading');
+    // If already reflected, return false (no need to reprocess)
+    if (reflectedServers.has(origin)) return false;
     
-    const result = await reflectionClient.fetchFromServer(origin);
-    if (result) {
-      registerSchema(result);
-      reflectionStatus.set('success');
-    } else {
-      reflectionStatus.set('failed');
+    // If reflection is in progress for this origin, wait for it
+    if (pendingReflections.has(origin)) {
+      return pendingReflections.get(origin);
     }
+    
+    // Start new reflection
+    const reflectionPromise = (async () => {
+      reflectionStatus.set('loading');
+      
+      const result = await reflectionClient.fetchFromServer(origin);
+      if (result) {
+        registerSchema(result);
+        reflectedServers.add(origin);
+        reflectionStatus.set('success');
+        console.debug(`[Schema] Reflection completed for ${origin}, shouldReprocess: true`);
+        return true; // Signals that logs should be reprocessed
+      } else {
+        reflectedServers.add(origin); // Mark as attempted even if failed
+        reflectionStatus.set('failed');
+        return false;
+      }
+    })();
+    
+    pendingReflections.set(origin, reflectionPromise);
+    const result = await reflectionPromise;
+    pendingReflections.delete(origin);
+    return result;
   } catch (e) {
     console.error("[Reflection] Error during auto-reflection:", e);
     reflectionStatus.set('failed');
+    return false;
   }
 }
 
