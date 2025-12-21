@@ -1,3 +1,4 @@
+/* global BigInt */
 /**
  * ProtoEngine.js - gRPC Debugger 2.0 Core
  * A schema-driven integrated decoder for gRPC-Web and Connect-RPC.
@@ -15,7 +16,8 @@ export class ProtoEngine {
   registerSchema(data) {
     if (data.messages) {
       for (const [fullName, def] of Object.entries(data.messages)) {
-        this.schemas.set(fullName.replace(/^\.+/, ""), def);
+        const key = fullName.replace(/^\.+/, "");
+        this.schemas.set(key, def);
       }
     }
     if (data.services) {
@@ -34,23 +36,50 @@ export class ProtoEngine {
   }
 
   /**
-   * Find message definition by name (with fallbacks)
+   * Find message definition by name (with multi-stage robust matching)
    */
   findMessage(typeName) {
     if (!typeName) return null;
+    
     const cleanName = typeName.replace(/^\.+/, "");
     
-    // 1. Direct match
-    if (this.schemas.has(cleanName)) return this.schemas.get(cleanName);
-
-    // 2. Case-insensitive / normalized match
-    const lowerName = cleanName.toLowerCase();
-    for (const [name, def] of this.schemas.entries()) {
-      if (name.toLowerCase() === lowerName) return def;
-      if (name.split('.').pop().toLowerCase() === lowerName.split('.').pop().toLowerCase()) {
-         // Potential match for short names, but be careful
+    // Stage 1: Exact match
+    if (this.schemas.has(cleanName)) {
+      return this.schemas.get(cleanName);
+    }
+    
+    // Stage 2: Suffix match (e.g., "Product" matches "common.Product")
+    for (const [key, msg] of this.schemas) {
+      if (key.endsWith(`.${cleanName}`) || key === cleanName) {
+        return msg;
       }
     }
+
+    // Stage 3: Case-insensitive tail match
+    const lowerClean = cleanName.toLowerCase();
+    for (const [key, msg] of this.schemas) {
+      if (key.toLowerCase().endsWith(lowerClean)) {
+        return msg;
+      }
+    }
+
+    // Stage 4: Unique tail segment match (ultimate fallback)
+    const tailSegment = cleanName.split(".").pop();
+    if (tailSegment) {
+      const candidates = [];
+      for (const [key, msg] of this.schemas) {
+        if (key.split(".").pop() === tailSegment) {
+          candidates.push(msg);
+        }
+      }
+      if (candidates.length === 1) {
+        return candidates[0];
+      }
+    }
+
+    // Log failure for diagnosis
+    console.debug(`[ProtoEngine] No definition found for: ${cleanName}`);
+    
     return null;
   }
 
@@ -58,30 +87,80 @@ export class ProtoEngine {
    * Decode a message buffer using its type name
    */
   decodeMessage(typeName, buffer) {
-    const schema = this.findMessage(typeName);
     const reader = new ProtoReader(buffer);
-    return this._decode(schema, reader);
+    const schema = this.findMessage(typeName);
+    return this._decode(schema, reader, typeName);
   }
 
-  _decode(schema, reader) {
+  _decode(schema, reader, typeName = "unknown") {
     const result = {};
     const fields = schema ? schema.fields : [];
-    const fieldMap = new Map(fields.map(f => [f.number, f]));
+    const fieldMap = new Map((fields || []).map(f => [f.number, f]));
+
+    if (!schema && typeName && typeName !== "unknown") {
+       console.warn(`[ProtoEngine] Unknown message: ${typeName}. Blind decoding.`);
+    }
 
     while (reader.pos < reader.len) {
-      const tag = reader.readVarint();
+      const tag = Number(reader.readVarint());
       const fieldNum = tag >>> 3;
       const wireType = tag & 0x7;
+
+      if (fieldNum === 0) break; // Invalid field number
 
       const fieldDef = fieldMap.get(fieldNum);
       const fieldName = fieldDef ? fieldDef.name : `field_${fieldNum}`;
       
       let value;
-      if (fieldDef && fieldDef.type === 11) { // TYPE_MESSAGE
-         const msgData = reader.readBytes();
-         value = this.decodeMessage(fieldDef.type_name, msgData);
-      } else {
-         value = reader.readField(wireType);
+
+      // 1. If we have a schema and it's a known type
+      if (fieldDef) {
+        // Handle Packed Repeated Fields (Wire Type 2 but expecting primitive types)
+        if (wireType === 2 && this.isPackableType(fieldDef.type)) {
+          const packData = reader.readBytes();
+          const packReader = new ProtoReader(packData);
+          value = [];
+          while (packReader.pos < packReader.len) {
+            value.push(this.readFieldValue(fieldDef, packReader, fieldDef.type));
+          }
+        } 
+        else if (fieldDef.type === 11 || fieldDef.type === 18) { // MESSAGE or SGROUP
+          const msgData = reader.readBytes();
+          const nestedTypeName = (fieldDef.type_name || "").replace(/^\.+/, "");
+          const nestedSchema = this.findMessage(nestedTypeName);
+          if (!nestedSchema && nestedTypeName) {
+            console.debug(`[ProtoEngine] Nested type not found: ${nestedTypeName}`);
+          }
+          value = this._decode(nestedSchema, new ProtoReader(msgData), nestedTypeName);
+        }
+        else {
+          value = this.readFieldValue(fieldDef, reader, wireType);
+        }
+      } 
+      // 2. Blind decoding (No schema or unknown field)
+      else {
+        if (wireType === 2) {
+          const raw = reader.readBytes();
+          // Heuristic: try to guess if it's a nested message
+          try {
+            const subReader = new ProtoReader(raw);
+            const subDecoded = this._decode(null, subReader);
+            // If it has at least one field and consumed most bytes (allow for small trailing padding)
+            if (Object.keys(subDecoded).length > 0 && subReader.pos / subReader.len > 0.8) {
+              value = subDecoded;
+            } else {
+              throw new Error("Maybe string");
+            }
+          } catch {
+            try {
+              value = new TextDecoder("utf-8", { fatal: true }).decode(raw);
+            } catch {
+              value = Array.from(raw).map(b => b.toString(16).padStart(2, 'x')).join(' ');
+            }
+          }
+        } else {
+          value = reader.readField(wireType);
+        }
       }
 
       // Handle Repeated fields
@@ -89,54 +168,147 @@ export class ProtoEngine {
         if (!Array.isArray(result[fieldName])) {
           result[fieldName] = [result[fieldName]];
         }
-        result[fieldName].push(value);
+        if (Array.isArray(value)) {
+          result[fieldName].push(...value);
+        } else {
+          result[fieldName].push(value);
+        }
       } else {
         result[fieldName] = value;
       }
     }
     return result;
   }
+
+  isPackableType(type) {
+    // Standard packable types (scalars)
+    const packables = [1, 2, 3, 4, 5, 6, 7, 8, 13, 14, 15, 16, 17, 18];
+    return packables.includes(type);
+  }
+
+  readFieldValue(fieldDef, reader, wireType) {
+    switch (fieldDef.type) {
+      case 1:  return reader.readDouble(); // DOUBLE
+      case 2:  return reader.readFloat();  // FLOAT
+      case 3:  return reader.readVarint().toString(); // INT64
+      case 4:  return reader.readVarint().toString(); // UINT64
+      case 5:  return reader.readVarint(); // INT32
+      case 6:  return reader.readFixed64().toString(); // FIXED64
+      case 7:  return reader.readFixed32(); // FIXED32
+      case 8:  return reader.readVarint() !== 0n; // BOOL
+      case 9:  return reader.readString(); // STRING
+      case 12: return reader.readBytes();  // BYTES
+      case 13: return Number(reader.readVarint()); // UINT32
+      case 14: // ENUM
+        const val = Number(reader.readVarint());
+        const enumDef = this.findMessage(fieldDef.type_name);
+        if (enumDef && enumDef.isEnum && enumDef.values && enumDef.values[val] !== undefined) {
+          return enumDef.values[val];
+        }
+        return val;
+      case 15: return reader.readSFixed32(); // SFIXED32
+      case 16: return reader.readSFixed64().toString(); // SFIXED64
+      case 17: return reader.readSVarint(); // SINT32
+      case 18: return reader.readSVarint64().toString(); // SINT64
+      default: return reader.readField(wireType);
+    }
+  }
 }
 
 /**
- * Low-level binary reader for Protobuf
+ * Low-level binary reader for Protobuf (BigInt supported)
  */
 class ProtoReader {
   constructor(buffer) {
     this.buf = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
     this.pos = 0;
     this.len = this.buf.length;
+    this.view = new DataView(this.buf.buffer, this.buf.byteOffset, this.buf.byteLength);
   }
 
   readVarint() {
-    let val = 0;
-    let shift = 0;
+    let val = 0n;
+    let shift = 0n;
     while (this.pos < this.len) {
-      const b = this.buf[this.pos++];
-      val += (b & 0x7f) << shift;
-      if (!(b & 0x80)) return val >>> 0;
-      shift += 7;
+      const b = BigInt(this.buf[this.pos++]);
+      val |= (b & 0x7fn) << shift;
+      if (!(b & 0x80n)) return val;
+      shift += 7n;
     }
     return val;
   }
 
+  readSVarint() {
+    const n = Number(this.readVarint());
+    return (n >>> 1) ^ -(n & 1);
+  }
+
+  readSVarint64() {
+    const n = this.readVarint();
+    return (n >> 1n) ^ -(n & 1n);
+  }
+
   readFixed32() {
-    const val = (this.buf[this.pos] | 
-                 (this.buf[this.pos+1] << 8) | 
-                 (this.buf[this.pos+2] << 16) | 
-                 (this.buf[this.pos+3] << 24)) >>> 0;
+    if (this.pos + 4 > this.len) return 0;
+    const val = this.view.getUint32(this.pos, true);
+    this.pos += 4;
+    return val;
+  }
+
+  readSFixed32() {
+    if (this.pos + 4 > this.len) return 0;
+    const val = this.view.getInt32(this.pos, true);
     this.pos += 4;
     return val;
   }
 
   readFixed64() {
-    const low = this.readFixed32();
-    const high = this.readFixed32();
-    return (BigInt(high) << 32n) + BigInt(low);
+    if (this.pos + 8 > this.len) return 0n;
+    const low = BigInt(this.view.getUint32(this.pos, true));
+    const high = BigInt(this.view.getUint32(this.pos + 4, true));
+    this.pos += 8;
+    return (high << 32n) | low;
+  }
+
+  readSFixed64() {
+    if (this.pos + 8 > this.len) return 0n;
+    const low = BigInt(this.view.getUint32(this.pos, true));
+    const high = BigInt(this.view.getInt32(this.pos + 4, true));
+    this.pos += 8;
+    return (high << 32n) | low;
+  }
+
+  readFloat() {
+    if (this.pos + 4 > this.len) return 0;
+    const val = this.view.getFloat32(this.pos, true);
+    this.pos += 4;
+    return val;
+  }
+
+  readDouble() {
+    if (this.pos + 8 > this.len) return 0;
+    const val = this.view.getFloat64(this.pos, true);
+    this.pos += 8;
+    return val;
+  }
+
+  // ZigZag decoding for sint32
+  readSVarint() {
+    const n = this.readVarint();
+    // ZigZag decode: (n >>> 1) ^ -(n & 1)
+    const num = Number(n);
+    return (num >>> 1) ^ -(num & 1);
+  }
+
+  // ZigZag decoding for sint64 (BigInt)
+  readSVarint64() {
+    const n = this.readVarint();
+    // ZigZag decode for BigInt: (n >> 1n) ^ -(n & 1n)
+    return (n >> 1n) ^ -(n & 1n);
   }
 
   readBytes() {
-    const len = this.readVarint();
+    const len = Number(this.readVarint());
     const data = this.buf.slice(this.pos, this.pos + len);
     this.pos += len;
     return data;
@@ -149,19 +321,11 @@ class ProtoReader {
 
   readField(wireType) {
     switch(wireType) {
-      case 0: return this.readVarint();
+      case 0: return this.readVarint().toString();
       case 1: return this.readFixed64().toString();
-      case 2: 
-        const data = this.readBytes();
-        try {
-          return new TextDecoder("utf-8", { fatal: true }).decode(data);
-        } catch {
-          return data; // Fallback to bytes
-        }
+      case 2: return this.readBytes(); 
       case 5: return this.readFixed32();
-      default:
-        // Skip unknown wire types
-        return null;
+      default: return null;
     }
   }
 }

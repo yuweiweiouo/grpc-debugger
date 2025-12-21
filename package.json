@@ -1,6 +1,7 @@
 {
   "name": "grpc-debugger",
   "version": "1.0.0",
+  "type": "module",
   "license": "MIT",
   "author": "魚尾尾 yuweiwei.ouo@gmail.com",
   "description": "",

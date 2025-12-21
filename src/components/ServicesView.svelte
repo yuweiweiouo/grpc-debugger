@@ -19,17 +19,17 @@
       {#if $reflectionStatus === 'loading'}
         <div class="status-badge loading">
           <RefreshCw size={12} class="spin" />
-          <span>Reflecting...</span>
+          <span>{$t('reflecting')}</span>
         </div>
       {:else if $reflectionStatus === 'success'}
         <div class="status-badge success">
           <CheckCircle2 size={12} />
-          <span>Sync OK</span>
+          <span>{$t('sync_ok')}</span>
         </div>
       {:else if $reflectionStatus === 'failed'}
         <div class="status-badge error">
           <AlertCircle size={12} />
-          <span>Sync Failed</span>
+          <span>{$t('sync_failed')}</span>
         </div>
       {/if}
     </div>

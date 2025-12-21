@@ -27,14 +27,14 @@ export const selectedEntry = derived(
   }
 );
 
-export function addLog(entry) {
+export async function addLog(entry) {
   if (entry.method) {
     const parts = entry.method.split("/");
     entry.endpoint = parts.pop() || parts.pop();
   }
 
-  // Schema-Driven Decoding logic
-  processEntry(entry);
+  // Schema-Driven Decoding logic (MUST await now)
+  await processEntry(entry);
 
   log.update(list => [...list, entry]);
 
@@ -47,11 +47,23 @@ export function addLog(entry) {
   }
 }
 
-export function reprocessAllLogs() {
-  log.update(list => {
-    list.forEach(entry => processEntry(entry));
-    return [...list];
-  });
+export async function reprocessAllLogs() {
+  let currentLogs;
+  log.subscribe(l => currentLogs = l)();
+  
+  if (!currentLogs) return;
+
+  // Clear old decoded results to force re-decode
+  for (const entry of currentLogs) {
+    entry.request = null;
+    entry.response = null;
+  }
+
+  // Process all entries in parallel
+  await Promise.all(currentLogs.map(entry => processEntry(entry)));
+  
+  // Trigger update
+  log.set([...currentLogs]);
 }
 
 export function clearLogs(force = false) {
@@ -62,16 +74,20 @@ export function clearLogs(force = false) {
   })();
 }
 
-function processEntry(entry) {
+async function processEntry(entry) {
   const methodInfo = protoEngine.serviceMap.get(entry.method);
+  
+  if (!methodInfo && entry.method) {
+    console.debug(`[Network] No method info for: ${entry.method}`);
+  }
   
   // Decoding Request
   if (entry.requestRaw && !entry.request) {
     try {
-      // Basic gRPC-Web frame decoding is still needed before proto decoding
-      const payload = extractPayload(entry.requestRaw, entry.requestBase64Encoded);
-      if (payload && methodInfo) {
-        entry.request = protoEngine.decodeMessage(methodInfo.requestType, payload);
+      const payload = await extractPayload(entry.requestRaw, entry.requestBase64Encoded, entry.requestHeaders);
+      if (payload) {
+        const typeName = methodInfo?.requestType || null;
+        entry.request = protoEngine.decodeMessage(typeName, payload);
       }
     } catch (e) {
       entry.request = { _error: e.message };
@@ -81,9 +97,10 @@ function processEntry(entry) {
   // Decoding Response
   if (entry.responseRaw && !entry.response) {
     try {
-      const payload = extractPayload(entry.responseRaw, entry.responseBase64Encoded);
-      if (payload && methodInfo) {
-        entry.response = protoEngine.decodeMessage(methodInfo.responseType, payload);
+      const payload = await extractPayload(entry.responseRaw, entry.responseBase64Encoded, entry.responseHeaders);
+      if (payload) {
+        const typeName = methodInfo?.responseType || null;
+        entry.response = protoEngine.decodeMessage(typeName, payload);
       }
     } catch (e) {
       entry.response = { _error: e.message };
@@ -91,7 +108,7 @@ function processEntry(entry) {
   }
 }
 
-function extractPayload(data, isBase64) {
+async function extractPayload(data, isBase64, headers = {}) {
   let buffer;
   if (typeof data === 'string') {
     buffer = isBase64 ? Uint8Array.from(atob(data), c => c.charCodeAt(0)) : new TextEncoder().encode(data);
@@ -99,10 +116,73 @@ function extractPayload(data, isBase64) {
     buffer = new Uint8Array(data);
   }
   
-  // Skip gRPC-Web 5-byte header
-  if (buffer.length >= 5) {
-    const length = (buffer[1] << 24) | (buffer[2] << 16) | (buffer[3] << 8) | buffer[4];
-    return buffer.slice(5, 5 + length);
+  if (buffer.length === 0) return null;
+
+  // 1. Handle Compression
+  const encoding = (headers['grpc-encoding'] || headers['connect-content-encoding'] || '').toLowerCase();
+  if (encoding === 'gzip' && typeof DecompressionStream !== 'undefined') {
+    try {
+      const ds = new DecompressionStream('gzip');
+      const decompressionResponse = new Response(buffer);
+      const reader = decompressionResponse.body.pipeThrough(ds).getReader();
+      const chunks = [];
+      let totalLength = 0;
+      
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        totalLength += value.length;
+      }
+      
+      const newBuffer = new Uint8Array(totalLength);
+      let offset = 0;
+      for (const chunk of chunks) {
+        newBuffer.set(chunk, offset);
+        offset += chunk.length;
+      }
+      buffer = newBuffer;
+    } catch (e) {
+      console.warn("[Network] Gzip decompression failed:", e);
+    }
   }
-  return buffer;
+
+  // 2. Handle gRPC-Web / Connect Length-Prefixed Framing
+  let pos = 0;
+  const messageChunks = [];
+  
+  while (pos + 5 <= buffer.length) {
+    const flags = buffer[pos];
+    const length = (buffer[pos + 1] << 24) | (buffer[pos + 2] << 16) | (buffer[pos + 3] << 8) | buffer[pos + 4];
+    
+    const start = pos + 5;
+    const end = start + length;
+    
+    if (end > buffer.length) break;
+
+    // In most gRPC-Web cases, flags=0 is data. 
+    // However, some implementations might use flags=1 for compression (if not handle at transport layer).
+    // The most robust way is to aggregate everything that isn't a known Control Frame.
+    const isData = (flags & 0x01) === 0; // Skip Trailers (bit 0 set)
+    
+    if (isData) {
+      messageChunks.push(buffer.slice(start, end));
+    }
+    
+    pos = end;
+  }
+
+  if (messageChunks.length > 0) {
+    // Combine all data frames (usually just one, but streaming has multiple)
+    const totalLen = messageChunks.reduce((acc, c) => acc + c.length, 0);
+    const combined = new Uint8Array(totalLen);
+    let offset = 0;
+    for (const chunk of messageChunks) {
+      combined.set(chunk, offset);
+      offset += chunk.length;
+    }
+    return combined;
+  }
+
+  return buffer; // Fallback to raw if no framing detected
 }

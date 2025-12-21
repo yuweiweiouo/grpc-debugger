@@ -23,10 +23,49 @@ class ReflectionClient {
 
         console.log("[Reflection] Found services:", services);
 
-        // Step 2: Get file descriptors for each service
+        // Step 2: Get file descriptors for each service (with dependency resolution)
         const result = {
           services: [],
           messages: {},
+        };
+        
+        const loadedFiles = new Set();
+        
+        const loadFileDescriptors = async (descriptorBytes) => {
+          if (!descriptorBytes) return;
+          
+          for (const bytes of descriptorBytes) {
+            const descriptor = this.bytesToDescriptor(bytes);
+            
+            // Skip if already loaded
+            if (loadedFiles.has(descriptor.name)) continue;
+            loadedFiles.add(descriptor.name);
+            
+            // Parse current file
+            const parsed = this.parseFileDescriptorSingle(descriptor);
+            if (parsed) {
+              result.services.push(...(parsed.services || []));
+              Object.assign(result.messages, parsed.messages || {});
+            }
+            
+            // Recursively load dependencies
+            for (const depName of descriptor.dependency || []) {
+              if (loadedFiles.has(depName)) continue;
+              
+              try {
+                const depDescriptor = await this.getFileByFilename(
+                  serverUrl,
+                  reflectionService,
+                  depName
+                );
+                if (depDescriptor) {
+                  await loadFileDescriptors(depDescriptor);
+                }
+              } catch (e) {
+                console.debug(`[Reflection] Could not load dependency: ${depName}`);
+              }
+            }
+          }
         };
 
         for (const serviceName of services) {
@@ -39,13 +78,7 @@ class ReflectionClient {
               serviceName
             );
 
-            if (fileDescriptor) {
-              const parsed = this.parseFileDescriptor(fileDescriptor);
-              if (parsed) {
-                result.services.push(...(parsed.services || []));
-                Object.assign(result.messages, parsed.messages || {});
-              }
-            }
+            await loadFileDescriptors(fileDescriptor);
           } catch (e) {
             console.warn(`[Reflection] Failed to get descriptor for ${serviceName}:`, e.message);
           }
@@ -53,6 +86,7 @@ class ReflectionClient {
 
         if (result.services.length > 0 || Object.keys(result.messages).length > 0) {
           console.log("[Reflection] Complete result:", result);
+          console.log("[Reflection] Loaded message types:", Object.keys(result.messages));
           return result;
         }
       } catch (e) {
@@ -65,31 +99,89 @@ class ReflectionClient {
 
   async listServices(serverUrl, reflectionService) {
     const url = `${serverUrl}/${reflectionService}/ServerReflectionInfo`;
+    const host = new URL(serverUrl).host;
 
-    // Encode: list_services = "" (field 7)
-    const request = new Uint8Array([0x3a, 0x00]);
-    const response = await this.sendGrpcWebRequest(url, request);
+    // Encode: host = host (field 1), list_services = "" (field 7)
+    const hostBytes = new TextEncoder().encode(host);
+    const request = new Uint8Array(2 + hostBytes.length + 2);
+    
+    let offset = 0;
+    request[offset++] = 0x0a; // field 1, wire type 2
+    request[offset++] = hostBytes.length;
+    request.set(hostBytes, offset);
+    offset += hostBytes.length;
+    
+    request[offset++] = 0x3a; // field 7, wire type 2
+    request[offset++] = 0x00; // length 0
 
-    if (!response) return null;
+    const responses = await this.sendGrpcWebRequest(url, request);
+    if (!responses) return null;
 
-    return this.parseListServicesResponse(response);
+    const services = [];
+    for (const resp of responses) {
+      services.push(...this.parseListServicesResponse(resp));
+    }
+    return services;
   }
 
   async getFileContainingSymbol(serverUrl, reflectionService, symbol) {
     const url = `${serverUrl}/${reflectionService}/ServerReflectionInfo`;
+    const host = new URL(serverUrl).host;
 
-    // Encode: file_containing_symbol = symbol (field 4)
+    // Encode: host = host (field 1), file_containing_symbol = symbol (field 4)
+    const hostBytes = new TextEncoder().encode(host);
     const symbolBytes = new TextEncoder().encode(symbol);
-    const request = new Uint8Array(2 + symbolBytes.length);
-    request[0] = 0x22; // field 4, wire type 2
-    request[1] = symbolBytes.length;
-    request.set(symbolBytes, 2);
+    
+    const request = new Uint8Array(2 + hostBytes.length + 2 + symbolBytes.length);
+    let offset = 0;
+    
+    request[offset++] = 0x0a; // field 1, wire type 2
+    request[offset++] = hostBytes.length;
+    request.set(hostBytes, offset);
+    offset += hostBytes.length;
+    
+    request[offset++] = 0x22; // field 4, wire type 2
+    request[offset++] = symbolBytes.length;
+    request.set(symbolBytes, offset);
 
-    const response = await this.sendGrpcWebRequest(url, request);
+    const responses = await this.sendGrpcWebRequest(url, request);
+    if (!responses) return null;
 
-    if (!response) return null;
+    const descriptors = [];
+    for (const resp of responses) {
+      descriptors.push(...(this.parseFileDescriptorResponse(resp) || []));
+    }
+    return descriptors.length > 0 ? descriptors : null;
+  }
 
-    return this.parseFileDescriptorResponse(response);
+  async getFileByFilename(serverUrl, reflectionService, filename) {
+    const url = `${serverUrl}/${reflectionService}/ServerReflectionInfo`;
+    const host = new URL(serverUrl).host;
+
+    // Encode: host = host (field 1), file_by_filename = filename (field 3)
+    const hostBytes = new TextEncoder().encode(host);
+    const filenameBytes = new TextEncoder().encode(filename);
+    
+    const request = new Uint8Array(2 + hostBytes.length + 2 + filenameBytes.length);
+    let offset = 0;
+    
+    request[offset++] = 0x0a; // field 1, wire type 2
+    request[offset++] = hostBytes.length;
+    request.set(hostBytes, offset);
+    offset += hostBytes.length;
+    
+    request[offset++] = 0x1a; // field 3, wire type 2
+    request[offset++] = filenameBytes.length;
+    request.set(filenameBytes, offset);
+
+    const responses = await this.sendGrpcWebRequest(url, request);
+    if (!responses) return null;
+
+    const descriptors = [];
+    for (const resp of responses) {
+      descriptors.push(...(this.parseFileDescriptorResponse(resp) || []));
+    }
+    return descriptors.length > 0 ? descriptors : null;
   }
 
   async sendGrpcWebRequest(url, requestBody) {
@@ -121,9 +213,28 @@ class ReflectionClient {
 
     if (data.length < 5) return null;
 
-    // Unframe
-    const length = (data[1] << 24) | (data[2] << 16) | (data[3] << 8) | data[4];
-    return data.slice(5, 5 + length);
+    // Unframe all messages (gRPC-Web can send multiple frames in one response)
+    const payloads = [];
+    let pos = 0;
+    while (pos + 5 <= data.length) {
+      const flags = data[pos];
+      const length = (data[pos + 1] << 24) | (data[pos + 2] << 16) | (data[pos + 3] << 8) | data[pos + 4];
+      const start = pos + 5;
+      const end = start + length;
+      
+      if (end > data.length) break;
+
+      // Bit 7: Compressed, Bit 1: Trailers
+      const isData = (flags & 0x80) === 0 && (flags & 0x01) === 0;
+      if (isData) {
+        payloads.push(data.slice(start, end));
+      }
+      pos = end;
+    }
+
+    // For reflection, we usually care about the aggregated data or the first valid response
+    // If it's multiple frames, they are usually separate ServerReflectionResponse messages
+    return payloads.length > 0 ? payloads : null;
   }
 
   parseListServicesResponse(data) {
@@ -140,6 +251,8 @@ class ReflectionClient {
 
         if (fieldNum === 6) { // list_services_response
           services.push(...this.parseListServicesResponseField(fieldData));
+        } else if (fieldNum === 7) { // error_response
+          this.logErrorResponse(fieldData);
         }
       } else {
         pos = this.skipField(data, pos, wireType);
@@ -208,6 +321,8 @@ class ReflectionClient {
 
         if (fieldNum === 4) { // file_descriptor_response
           return this.parseFileDescriptorResponseField(fieldData);
+        } else if (fieldNum === 7) { // error_response
+          this.logErrorResponse(fieldData);
         }
       } else {
         pos = this.skipField(data, pos, wireType);
@@ -249,45 +364,11 @@ class ReflectionClient {
 
       for (const bytes of descriptorBytes) {
         const descriptor = this.bytesToDescriptor(bytes);
-        const packageName = descriptor.package || "";
-
-        // Extract services
-        for (const svc of descriptor.service || []) {
-          const fullName = packageName ? `${packageName}.${svc.name}` : svc.name;
-          result.services.push({
-            name: svc.name,
-            fullName,
-            methods: (svc.method || []).map((m) => ({
-              name: m.name,
-              requestType: m.inputType?.replace(/^\./, "") || "",
-              responseType: m.outputType?.replace(/^\./, "") || "",
-            })),
-          });
+        const parsed = this.parseFileDescriptorSingle(descriptor);
+        if (parsed) {
+          result.services.push(...(parsed.services || []));
+          Object.assign(result.messages, parsed.messages || {});
         }
-
-        // Extract messages
-        const extractMessages = (messages, prefix) => {
-          for (const msg of messages || []) {
-            const fullName = prefix ? `${prefix}.${msg.name}` : msg.name;
-            result.messages[fullName] = {
-              name: msg.name,
-              fullName,
-              fields: (msg.field || []).map((f) => ({
-                name: f.name,
-                number: f.number,
-                type: f.type,
-                type_name: f.type_name,
-              })),
-            };
-
-            // Handle nested types
-            if (msg.nestedType && msg.nestedType.length > 0) {
-              extractMessages(msg.nestedType, fullName);
-            }
-          }
-        };
-
-        extractMessages(descriptor.messageType, packageName);
       }
 
       console.log("[Reflection] Parsed descriptor:", result);
@@ -298,11 +379,86 @@ class ReflectionClient {
     }
   }
 
+  parseFileDescriptorSingle(descriptor) {
+    try {
+      const result = {
+        services: [],
+        messages: {},
+      };
+
+      const packageName = descriptor.package || "";
+
+      // Extract services
+      for (const svc of descriptor.service || []) {
+        const fullName = packageName ? `${packageName}.${svc.name}` : svc.name;
+        result.services.push({
+          name: svc.name,
+          fullName,
+          methods: (svc.method || []).map((m) => ({
+            name: m.name,
+            requestType: m.inputType?.replace(/^\./, "") || "",
+            responseType: m.outputType?.replace(/^\./, "") || "",
+          })),
+        });
+      }
+
+      // Extract messages and enums
+      const extractMessages = (messages, prefix) => {
+        for (const msg of messages || []) {
+          const fullName = prefix ? `${prefix}.${msg.name}` : msg.name;
+          result.messages[fullName] = {
+            name: msg.name,
+            fullName,
+            fields: (msg.field || []).map((f) => ({
+              name: f.name,
+              number: f.number,
+              type: f.type,
+              type_name: f.type_name?.replace(/^\./, "") || "",
+            })),
+          };
+
+          // Handle nested types
+          if (msg.nestedType && msg.nestedType.length > 0) {
+            extractMessages(msg.nestedType, fullName);
+          }
+          // Handle nested enums
+          if (msg.enumType && msg.enumType.length > 0) {
+            extractEnums(msg.enumType, fullName);
+          }
+        }
+      };
+
+      const extractEnums = (enums, prefix) => {
+        for (const e of enums || []) {
+          const fullName = prefix ? `${prefix}.${e.name}` : e.name;
+          result.messages[fullName] = {
+            name: e.name,
+            fullName,
+            isEnum: true,
+            values: (e.value || []).reduce((acc, v) => {
+              acc[v.number] = v.name;
+              return acc;
+            }, {}),
+          };
+        }
+      };
+
+      extractMessages(descriptor.messageType, packageName);
+      extractEnums(descriptor.enumType, packageName);
+
+      return result;
+    } catch (e) {
+      console.warn("[Reflection] Failed to parse single descriptor:", e);
+      return null;
+    }
+  }
+
   bytesToDescriptor(bytes) {
     // Parse FileDescriptorProto manually
     const descriptor = {
       name: "",
       package: "",
+      dependency: [],
       messageType: [],
       service: [],
     };
@@ -320,9 +476,14 @@ class ReflectionClient {
           descriptor.name = new TextDecoder().decode(fieldData);
         } else if (fieldNum === 2) { // package
           descriptor.package = new TextDecoder().decode(fieldData);
+        } else if (fieldNum === 3) { // dependency
+          descriptor.dependency.push(new TextDecoder().decode(fieldData));
         } else if (fieldNum === 4) { // message_type
           const msg = this.parseMessageType(fieldData);
           if (msg) descriptor.messageType.push(msg);
+        } else if (fieldNum === 5) { // enum_type
+          const enm = this.parseEnumType(fieldData);
+          if (enm) (descriptor.enumType = descriptor.enumType || []).push(enm);
         } else if (fieldNum === 6) { // service
           const svc = this.parseServiceType(fieldData);
           if (svc) descriptor.service.push(svc);
@@ -359,6 +520,9 @@ class ReflectionClient {
         } else if (fieldNum === 3) { // nested_type
           const nested = this.parseMessageType(fieldData);
           if (nested) message.nestedType.push(nested);
+        } else if (fieldNum === 4) { // enum_type
+          const enm = this.parseEnumType(fieldData);
+          if (enm) (message.enumType = message.enumType || []).push(enm);
         }
       } else {
         pos = this.skipField(data, pos, wireType);
@@ -366,6 +530,44 @@ class ReflectionClient {
     }
 
     return message;
+  }
+
+  parseEnumType(data) {
+    const enm = { name: "", value: [] };
+    let pos = 0;
+    while (pos < data.length) {
+      const [fieldNum, wireType, newPos] = this.readTag(data, pos);
+      pos = newPos;
+      if (wireType === 2) {
+        const [fieldData, nextPos] = this.readLengthDelimited(data, pos);
+        pos = nextPos;
+        if (fieldNum === 1) enm.name = new TextDecoder().decode(fieldData);
+        else if (fieldNum === 2) {
+          const val = this.parseEnumValue(fieldData);
+          if (val) enm.value.push(val);
+        }
+      } else pos = this.skipField(data, pos, wireType);
+    }
+    return enm;
+  }
+
+  parseEnumValue(data) {
+    const val = { name: "", number: 0 };
+    let pos = 0;
+    while (pos < data.length) {
+      const [fieldNum, wireType, newPos] = this.readTag(data, pos);
+      pos = newPos;
+      if (wireType === 2 && fieldNum === 1) {
+        const [fieldData, nextPos] = this.readLengthDelimited(data, pos);
+        pos = nextPos;
+        val.name = new TextDecoder().decode(fieldData);
+      } else if (wireType === 0 && fieldNum === 2) {
+        const [v, nextPos] = this.readVarint(data, pos);
+        pos = nextPos;
+        val.number = v;
+      } else pos = this.skipField(data, pos, wireType);
+    }
+    return val;
   }
 
   parseFieldDescriptor(data) {
@@ -505,6 +707,31 @@ class ReflectionClient {
       return pos + 8;
     }
     return pos;
+  }
+
+  logErrorResponse(data) {
+    let pos = 0;
+    let code = 0;
+    let msg = "";
+
+    while (pos < data.length) {
+      const [fieldNum, wireType, newPos] = this.readTag(data, pos);
+      pos = newPos;
+
+      if (wireType === 0 && fieldNum === 1) { // error_code
+        const [v, nextPos] = this.readVarint(data, pos);
+        pos = nextPos;
+        code = v;
+      } else if (wireType === 2 && fieldNum === 2) { // error_message
+        const [fieldData, nextPos] = this.readLengthDelimited(data, pos);
+        pos = nextPos;
+        msg = new TextDecoder().decode(fieldData);
+      } else {
+        pos = this.skipField(data, pos, wireType);
+      }
+    }
+
+    console.warn(`[Reflection] Server returned error (${code}): ${msg}`);
   }
 }
 
