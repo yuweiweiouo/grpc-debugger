@@ -40,9 +40,11 @@ export async function addLog(entry) {
 
   // Try auto-reflection if we don't have schema for this url
   if (entry.url && !protoEngine.serviceMap.has(entry.method)) {
-    tryAutoReflection(entry.url).then(() => {
-      // If reflection succeeded, re-process all logs that might now have schemas
-      reprocessAllLogs();
+    tryAutoReflection(entry.url).then((shouldReprocess) => {
+      if (shouldReprocess) {
+        console.debug(`[Network] Schema loaded, triggering reprocessAllLogs`);
+        reprocessAllLogs();
+      }
     });
   }
 }
@@ -51,19 +53,28 @@ export async function reprocessAllLogs() {
   let currentLogs;
   log.subscribe(l => currentLogs = l)();
   
-  if (!currentLogs) return;
+  if (!currentLogs || currentLogs.length === 0) return;
 
-  // Clear old decoded results to force re-decode
+  console.debug(`[Network] reprocessAllLogs called, processing ${currentLogs.length} entries`);
+
+  // Clear old decoded results to force re-decode with new schemas
+  let clearedCount = 0;
   for (const entry of currentLogs) {
-    entry.request = null;
-    entry.response = null;
+    // Only clear entries that might need re-decoding (have raw data but possibly bad decode)
+    if (entry.requestRaw || entry.responseRaw) {
+      entry.request = null;
+      entry.response = null;
+      clearedCount++;
+    }
   }
+  console.debug(`[Network] Cleared ${clearedCount} entries for re-decoding`);
 
   // Process all entries in parallel
   await Promise.all(currentLogs.map(entry => processEntry(entry)));
   
   // Trigger update
   log.set([...currentLogs]);
+  console.debug(`[Network] reprocessAllLogs complete`);
 }
 
 export function clearLogs(force = false) {
@@ -79,6 +90,9 @@ async function processEntry(entry) {
   
   if (!methodInfo && entry.method) {
     console.debug(`[Network] No method info for: ${entry.method}`);
+    console.debug(`[Network] Available methods:`, [...protoEngine.serviceMap.keys()].slice(0, 10));
+  } else if (methodInfo) {
+    console.debug(`[Network] Found methodInfo for ${entry.method}:`, methodInfo);
   }
   
   // Decoding Request
@@ -87,6 +101,7 @@ async function processEntry(entry) {
       const payload = await extractPayload(entry.requestRaw, entry.requestBase64Encoded, entry.requestHeaders);
       if (payload) {
         const typeName = methodInfo?.requestType || null;
+        console.debug(`[Network] Decoding request with typeName: ${typeName}`);
         entry.request = protoEngine.decodeMessage(typeName, payload);
       }
     } catch (e) {
