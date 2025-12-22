@@ -150,14 +150,14 @@
 
   .report-btn {
     width: 100%;
-    background: #ef4444;
-    border-color: #ef4444;
+    background: #3b82f6;
+    border-color: #3b82f6;
     color: white;
   }
 
   .report-btn:hover {
-    background: #dc2626;
-    border-color: #dc2626;
+    background: #2563eb;
+    border-color: #2563eb;
   }
 
   .version {

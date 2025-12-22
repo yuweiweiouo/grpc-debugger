@@ -177,20 +177,18 @@ class ProtoEngine {
     if (descMessage && descMessage.kind === 'message') {
       try {
         const message = fromBinary(descMessage, buffer);
-        // 轉換為普通 JavaScript 物件
         return this._messageToObject(message, descMessage);
       } catch (e) {
-        console.error(`[ProtoEngine] fromBinary failed for ${typeName}. Size: ${buffer.length}, Error: ${e.message}`);
-        if (buffer.length > 5) {
-          console.log(`[ProtoEngine] First 10 bytes: ${Array.from(buffer.slice(0, 10)).map(b => b.toString(16).padStart(2, '0')).join(' ')}`);
-        }
-        // 降級到舊的自製解碼邏輯，不要直接崩潰
-        return this._legacyDecode(schema, buffer, typeName);
+        console.error(`[ProtoEngine] Decode failed for ${typeName}: ${e.message}`);
+        return { _error: `Decode failed: ${e.message}`, _typeName: typeName };
       }
     }
     
-    // 使用舊的自製解碼邏輯（向後兼容）
-    return this._legacyDecode(schema, buffer, typeName);
+    // 找不到 schema，返回錯誤訊息
+    if (!typeName) {
+      return { _error: 'No type name provided', _rawLength: buffer.length };
+    }
+    return { _error: `Schema not found for: ${typeName}`, _rawLength: buffer.length };
   }
 
   /**
@@ -271,229 +269,9 @@ class ProtoEngine {
     return value;
   }
 
-  /**
-   * 盲測解碼（當沒有 schema 時使用）
-   * @param {Uint8Array} buffer
-   * @returns {object}
-   */
-  _blindDecode(buffer) {
-    const result = {};
-    const reader = new SimpleReader(buffer);
-    
-    while (reader.pos < reader.len) {
-      try {
-        const tag = Number(reader.readVarint());
-        const fieldNum = tag >>> 3;
-        const wireType = tag & 0x7;
-        
-        if (fieldNum === 0) break;
-        
-        const fieldName = `field_${fieldNum}`;
-        const value = this._readValue(reader, wireType, null, null);
-        
-        if (result[fieldName] !== undefined) {
-          if (!Array.isArray(result[fieldName])) {
-            result[fieldName] = [result[fieldName]];
-          }
-          result[fieldName].push(value);
-        } else {
-          result[fieldName] = value;
-        }
-      } catch (e) {
-        break;
-      }
-    }
-    
-    return result;
-  }
-
-  /**
-   * 舊版解碼邏輯（向後兼容）
-   */
-  _legacyDecode(schema, buffer, typeName = 'unknown') {
-    const result = {};
-    const fields = schema ? schema.fields : [];
-    const fieldMap = new Map((fields || []).map(f => [f.number, f]));
-    
-    if (schema && typeName !== 'unknown') {
-      const fieldNumbers = [...fieldMap.keys()].join(', ');
-      console.log(`[ProtoEngine] _legacyDecode: type=${typeName}, fieldMap.size=${fieldMap.size}, fieldNumbers=[${fieldNumbers}]`);
-    }
-    
-    const reader = new SimpleReader(buffer);
-    
-    while (reader.pos < reader.len) {
-      try {
-        const tag = Number(reader.readVarint());
-        const fieldNum = tag >>> 3;
-        const wireType = tag & 0x7;
-        
-        if (fieldNum === 0) break;
-        
-        const fieldDef = fieldMap.get(fieldNum);
-        const fieldName = fieldDef ? fieldDef.name : `field_${fieldNum}`;
-        const isRepeated = fieldDef?.label === 3;
-        
-        const value = this._readValue(reader, wireType, fieldDef, schema);
-        
-        if (isRepeated) {
-          if (!result[fieldName]) result[fieldName] = [];
-          if (Array.isArray(value)) {
-            result[fieldName].push(...value);
-          } else {
-            result[fieldName].push(value);
-          }
-        } else {
-          result[fieldName] = value;
-        }
-      } catch (e) {
-        break;
-      }
-    }
-    
-    return result;
-  }
-
-  /**
-   * 讀取欄位值
-   */
-  _readValue(reader, wireType, fieldDef, schema) {
-    switch (wireType) {
-      case 0: // Varint
-        return this._handleVarint(reader.readVarint(), fieldDef);
-      case 1: // 64-bit
-        return reader.readFixed64();
-      case 2: { // Length-delimited
-        const bytes = reader.readBytes();
-        return this._handleLengthDelimited(bytes, fieldDef, schema);
-      }
-      case 5: // 32-bit
-        return reader.readFixed32();
-      default:
-        return null;
-    }
-  }
-
-  /**
-   * 處理 varint
-   */
-  _handleVarint(value, fieldDef) {
-    if (!fieldDef) return Number(value);
-    
-    const type = fieldDef.type;
-    // sint32/sint64 需要 zigzag 解碼
-    if (type === 17 || type === 18) {
-      return Number((value >> 1n) ^ -(value & 1n));
-    }
-    // bool
-    if (type === 8) {
-      return value !== 0n;
-    }
-    return Number(value);
-  }
-
-  /**
-   * 處理 length-delimited
-   */
-  _handleLengthDelimited(bytes, fieldDef, schema) {
-    if (!fieldDef) {
-      // 盲測：嘗試解析為字串或嵌套訊息
-      try {
-        const str = new TextDecoder().decode(bytes);
-        if (/^[\x20-\x7E\s]*$/.test(str)) return str;
-      } catch {}
-      return this._blindDecode(bytes);
-    }
-    
-    const type = fieldDef.type;
-    
-    // 字串
-    if (type === 9) {
-      return new TextDecoder().decode(bytes);
-    }
-    // bytes
-    if (type === 12) {
-      return bytes;
-    }
-    // 嵌套訊息
-    if (type === 11) {
-      const nestedType = fieldDef.type_name;
-      return this.decodeMessage(nestedType, bytes);
-    }
-    // packed repeated
-    if (fieldDef.label === 3 && this._isPackable(type)) {
-      return this._unpackRepeated(bytes, type);
-    }
-    
-    return bytes;
-  }
-
-  _isPackable(type) {
-    return [1, 2, 3, 4, 5, 6, 7, 8, 13, 14, 15, 16, 17, 18].includes(type);
-  }
-
-  _unpackRepeated(bytes, type) {
-    const values = [];
-    const reader = new SimpleReader(bytes);
-    
-    while (reader.pos < reader.len) {
-      if ([1, 6, 16].includes(type)) {
-        values.push(reader.readFixed64());
-      } else if ([5, 13, 15, 17].includes(type)) {
-        values.push(reader.readFixed32());
-      } else {
-        values.push(Number(reader.readVarint()));
-      }
-    }
-    
-    return values;
-  }
-}
-
-/**
- * 簡易 Protobuf Reader
- */
-class SimpleReader {
-  constructor(buffer) {
-    this.buf = buffer;
-    this.pos = 0;
-    this.len = buffer.length;
-  }
-
-  readVarint() {
-    let result = 0n;
-    let shift = 0n;
-    
-    while (this.pos < this.len) {
-      const byte = this.buf[this.pos++];
-      result |= BigInt(byte & 0x7f) << shift;
-      if ((byte & 0x80) === 0) break;
-      shift += 7n;
-    }
-    
-    return result;
-  }
-
-  readBytes() {
-    const length = Number(this.readVarint());
-    const bytes = this.buf.slice(this.pos, this.pos + length);
-    this.pos += length;
-    return bytes;
-  }
-
-  readFixed32() {
-    const view = new DataView(this.buf.buffer, this.buf.byteOffset + this.pos, 4);
-    this.pos += 4;
-    return view.getUint32(0, true);
-  }
-
-  readFixed64() {
-    const low = this.readFixed32();
-    const high = this.readFixed32();
-    return BigInt(low) | (BigInt(high) << 32n);
-  }
 }
 
 // 導出單例
 export const protoEngine = new ProtoEngine();
 export default protoEngine;
+

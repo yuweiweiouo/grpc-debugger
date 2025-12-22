@@ -126,148 +126,174 @@ async function processEntry(entry, forceReprocess = false) {
   }
 }
 
+// ============================================================================
+// Payload Extraction Utilities
+// ============================================================================
+
 /**
- * 從原始資料提取 Protobuf payload
+ * 從原始資料提取 Protobuf payload（主協調函數）
+ * @param {string | Uint8Array} data - 原始資料
+ * @param {boolean} isBase64 - 是否需要 Base64 解碼
+ * @param {object} headers - HTTP headers
+ * @returns {Promise<Uint8Array>} - 解碼後的 payload
  */
 async function extractPayload(data, isBase64, headers = {}) {
-  let buffer;
   const contentType = (headers['content-type'] || '').toLowerCase();
   
-  // 1. 初始解碼 (Base64 or String/Uint8Array)
-  if (typeof data === 'string') {
-    // 如果是 grpc-web-text，通常資料本身就是 Base64
-    buffer = isBase64 ? Uint8Array.from(atob(data), c => c.charCodeAt(0)) : new TextEncoder().encode(data);
-  } else {
-    buffer = new Uint8Array(data);
+  // Step 1: 初始 Base64 解碼
+  let buffer = decodeInitialData(data, isBase64);
+  
+  // Step 2: 處理 grpc-web-text 雙層 Base64
+  if (contentType.includes('grpc-web-text')) {
+    buffer = handleGrpcWebText(buffer);
   }
   
-  // 2. 處理 application/grpc-web-text
-  // 為了解決雙層 Base64 問題 (HAR Base64 -> ASCII Text(Base64) -> Binary)
-  if (contentType.includes('grpc-web-text') && buffer.length > 0) {
-    // 檢查特徵：如果 buffer 開頭已經是 0x00 (Data) 或 0x01 (Trailer)，
-    // 或者包含大量不可列印字元，表示它已經是二進位框架，不需要再 atob
-    let nonPrintable = 0;
-    const checkLen = Math.min(buffer.length, 64);
-    for (let i = 0; i < checkLen; i++) {
-      const c = buffer[i];
-      if (c < 32 && c !== 10 && c !== 13 && c !== 9) nonPrintable++;
-    }
-
-    // 如果不可列印字元多於 10%，或開頭明顯是 gRPC Frame Flag (0 或 1)，則跳過
-    const isBinary = nonPrintable / checkLen > 0.1 || buffer[0] === 0 || buffer[0] === 1;
-
-    if (!isBinary) {
-      try {
-        // 將 buffer 轉回字串並過濾無效字元
-        const text = new TextDecoder().decode(buffer)
-          .replace(/[^A-Za-z0-9+/=]/g, '');
-        
-        if (text.length > 4) {
-          // 清除內部無效的 '=' (只保留結尾的)
-          let cleanText = text.replace(/=/g, '');
-          while (cleanText.length % 4 !== 0) cleanText += '=';
-          
-          try {
-            const binStr = atob(cleanText);
-            const newBuf = new Uint8Array(binStr.length);
-            for (let i = 0; i < binStr.length; i++) {
-              newBuf[i] = binStr.charCodeAt(i);
-            }
-            buffer = newBuf;
-          } catch (e) {
-            // 如果 atob 仍然失敗，說明資料雖然是 ASCII 但不是合法的 Base64
-            console.debug("[Network] ASCII detected but not Base64, skipping conversion");
-          }
-        }
-      } catch (e) {
-        console.warn("[Network] gRPC-Web-Text pre-parse failed:", e);
-      }
-    }
-  }
-
-  // 3. 處理 Gzip 壓縮
+  // Step 3: 全域 Gzip 解壓
   const encoding = (headers['grpc-encoding'] || headers['connect-content-encoding'] || '').toLowerCase();
-  if (encoding === 'gzip' && typeof DecompressionStream !== 'undefined') {
-    try {
-      const ds = new DecompressionStream('gzip');
-      const decompressionResponse = new Response(buffer);
-      const reader = decompressionResponse.body.pipeThrough(ds).getReader();
-      const chunks = [];
-      let totalLength = 0;
-      
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        chunks.push(value);
-        totalLength += value.length;
-      }
-      
-      buffer = new Uint8Array(totalLength);
-      let offset = 0;
-      for (const chunk of chunks) {
-        buffer.set(chunk, offset);
-        offset += chunk.length;
-      }
-    } catch (e) {
-      console.warn("[Network] Gzip decompression failed:", e);
-    }
+  if (encoding === 'gzip') {
+    buffer = await decompressGzip(buffer);
   }
-
-  // 4. 處理 gRPC Length-Prefixed Framing (5-byte header)
+  
+  // Step 4: 提取 gRPC Framing
   const isGrpc = contentType.includes('grpc') || contentType.includes('connect');
   if (isGrpc) {
-    let pos = 0;
-    const messageChunks = [];
-    let hasFraming = false;
-    
-    while (pos + 5 <= buffer.length) {
-      hasFraming = true;
-      const flags = buffer[pos];
-      const length = (buffer[pos + 1] << 24) | (buffer[pos + 2] << 16) | (buffer[pos + 3] << 8) | buffer[pos + 4];
-      
-      const start = pos + 5;
-      const end = start + length;
-      
-      if (end > buffer.length) {
-        console.warn(`[extractPayload] Frame length ${length} extends beyond buffer ${buffer.length}`);
-        break;
-      }
-
-      // gRPC Flags: bit 0 (0x01) is compression, bit 7 (0x80) is trailers
-      const isCompressed = (flags & 0x01) === 0x01;
-      const isData = (flags & 0x80) === 0;
-      
-      if (isData) {
-        let chunk = buffer.slice(start, end);
-        
-        // 處理 compressed frame
-        if (isCompressed && length > 0 && typeof DecompressionStream !== 'undefined') {
-          try {
-            const ds = new DecompressionStream('gzip'); 
-            const decompressed = await new Response(chunk).body.pipeThrough(ds);
-            chunk = new Uint8Array(await new Response(decompressed).arrayBuffer());
-          } catch (e) {
-            console.warn("[Network] Per-frame decompression failed:", e);
-          }
-        }
-        
-        messageChunks.push(chunk);
-      }
-      
-      pos = end;
-    }
-
-    if (hasFraming) {
-      const totalLen = messageChunks.reduce((acc, c) => acc + c.length, 0);
-      const combined = new Uint8Array(totalLen);
-      let offset = 0;
-      for (const chunk of messageChunks) {
-        combined.set(chunk, offset);
-        offset += chunk.length;
-      }
-      return combined;
-    }
+    const extracted = await extractGrpcFrames(buffer);
+    if (extracted) return extracted;
   }
-
+  
   return buffer;
+}
+
+/**
+ * 初始資料解碼（Base64 或字串轉 Uint8Array）
+ */
+function decodeInitialData(data, isBase64) {
+  if (typeof data === 'string') {
+    return isBase64 
+      ? Uint8Array.from(atob(data), c => c.charCodeAt(0)) 
+      : new TextEncoder().encode(data);
+  }
+  return new Uint8Array(data);
+}
+
+/**
+ * 處理 grpc-web-text 的雙層 Base64 問題
+ * HAR 可能會先 Base64 編碼，然後資料本身又是 Base64
+ */
+function handleGrpcWebText(buffer) {
+  if (buffer.length === 0) return buffer;
+  
+  // 檢查是否已經是二進位資料（包含不可列印字元或以 gRPC frame flag 開頭）
+  let nonPrintable = 0;
+  const checkLen = Math.min(buffer.length, 64);
+  for (let i = 0; i < checkLen; i++) {
+    const c = buffer[i];
+    if (c < 32 && c !== 10 && c !== 13 && c !== 9) nonPrintable++;
+  }
+  
+  const isBinary = nonPrintable / checkLen > 0.1 || buffer[0] === 0 || buffer[0] === 1;
+  if (isBinary) return buffer;
+  
+  // 嘗試 Base64 解碼
+  try {
+    const text = new TextDecoder().decode(buffer).replace(/[^A-Za-z0-9+/=]/g, '');
+    if (text.length <= 4) return buffer;
+    
+    // 修正 padding
+    let cleanText = text.replace(/=/g, '');
+    while (cleanText.length % 4 !== 0) cleanText += '=';
+    
+    const binStr = atob(cleanText);
+    const newBuf = new Uint8Array(binStr.length);
+    for (let i = 0; i < binStr.length; i++) {
+      newBuf[i] = binStr.charCodeAt(i);
+    }
+    return newBuf;
+  } catch {
+    return buffer;
+  }
+}
+
+/**
+ * Gzip 解壓縮
+ */
+async function decompressGzip(buffer) {
+  if (typeof DecompressionStream === 'undefined') return buffer;
+  
+  try {
+    const ds = new DecompressionStream('gzip');
+    const reader = new Response(buffer).body.pipeThrough(ds).getReader();
+    const chunks = [];
+    let totalLength = 0;
+    
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      totalLength += value.length;
+    }
+    
+    const result = new Uint8Array(totalLength);
+    let offset = 0;
+    for (const chunk of chunks) {
+      result.set(chunk, offset);
+      offset += chunk.length;
+    }
+    return result;
+  } catch (e) {
+    console.warn('[Network] Gzip decompression failed:', e);
+    return buffer;
+  }
+}
+
+/**
+ * 提取 gRPC Length-Prefixed Framing 中的資料
+ * 返回 null 表示沒有有效的 framing
+ */
+async function extractGrpcFrames(buffer) {
+  let pos = 0;
+  const messageChunks = [];
+  let hasFraming = false;
+  
+  while (pos + 5 <= buffer.length) {
+    hasFraming = true;
+    const flags = buffer[pos];
+    const length = (buffer[pos + 1] << 24) | (buffer[pos + 2] << 16) | (buffer[pos + 3] << 8) | buffer[pos + 4];
+    
+    const start = pos + 5;
+    const end = start + length;
+    
+    if (end > buffer.length) {
+      console.warn(`[extractPayload] Frame length ${length} exceeds buffer ${buffer.length}`);
+      break;
+    }
+    
+    // gRPC Flags: bit 0 = compression, bit 7 = trailers
+    const isCompressed = (flags & 0x01) === 0x01;
+    const isData = (flags & 0x80) === 0;
+    
+    if (isData) {
+      let chunk = buffer.slice(start, end);
+      
+      if (isCompressed && length > 0) {
+        chunk = await decompressGzip(chunk);
+      }
+      
+      messageChunks.push(chunk);
+    }
+    
+    pos = end;
+  }
+  
+  if (!hasFraming) return null;
+  
+  // 合併所有資料塊
+  const totalLen = messageChunks.reduce((acc, c) => acc + c.length, 0);
+  const combined = new Uint8Array(totalLen);
+  let offset = 0;
+  for (const chunk of messageChunks) {
+    combined.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return combined;
 }
