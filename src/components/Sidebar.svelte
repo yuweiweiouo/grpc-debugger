@@ -1,6 +1,12 @@
 <script>
+  /**
+   * 側邊導航欄 (Sidebar)
+   * 
+   * 提供主要功能頁面的切換按鈕。
+   */
   import { activePage, navigate } from "../stores/ui";
   import { t } from "../lib/i18n";
+  import { APP_VERSION } from "../lib/version";
   import { Activity, ShieldCheck, Settings, Box } from "lucide-svelte";
 </script>
 
@@ -35,7 +41,7 @@
     >
       <Settings size={20} />
     </button>
-    <div class="version">v2.16</div>
+    <div class="version">v{APP_VERSION}</div>
   </div>
 </nav>
 

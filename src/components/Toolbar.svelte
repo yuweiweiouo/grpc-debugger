@@ -1,4 +1,9 @@
 <script>
+  /**
+   * 工具欄 (Toolbar)
+   * 
+   * 提供網路日誌的過濾、清除、以及持久化設定（Preserve Log）。
+   */
   import {
     filterValue,
     clearLogs,

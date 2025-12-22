@@ -1,4 +1,10 @@
 <script>
+  /**
+   * Proto 欄位顯示行 (Proto Field Row)
+   * 
+   * 以表格行 (tr) 形式顯示單個 Protobuf 欄位的定義，
+   * 包含編號 (tag)、名稱以及類型名稱。
+   */
   import { protoEngine } from "../lib/proto-engine";
 
   export let field;

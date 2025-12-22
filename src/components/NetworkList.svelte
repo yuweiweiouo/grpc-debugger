@@ -1,4 +1,12 @@
 <script>
+  /**
+   * 網路請求列表組件 (Network List)
+   * 
+   * 職責：
+   * 1. 條列式顯示所有經過過濾的 gRPC 請求。
+   * 2. 透過顏色小點 (Dot) 反映請求的即時狀態 (Pending, Success, Error)。
+   * 3. 實作「自動滾動到底部」邏輯，方便使用者追蹤最新的請求。
+   */
   import { afterUpdate } from "svelte";
   import { filteredLog, selectedIdx } from "../stores/network";
   import { t } from "../lib/i18n";
@@ -17,13 +25,20 @@
     }
   }
 
+  /**
+   * 滾動偵聽：判斷使用者是否手動往上捲動
+   * 若使用者手動往上捲，則暫時停止自動滾動，避免干擾閱讀舊紀錄。
+   */
   function handleScroll() {
     if (!listContainer) return;
-    // 檢查是否在底部（允許 5px 誤差）
     const { scrollTop, scrollHeight, clientHeight } = listContainer;
+    // 允許 5px 誤差以判定是否在底部
     shouldAutoScroll = scrollHeight - scrollTop - clientHeight < 5;
   }
 
+  /**
+   * 生命週期：資料更新後若處於「跟隨模式」，則強制滾動到最下方。
+   */
   afterUpdate(() => {
     if (shouldAutoScroll && listContainer) {
       listContainer.scrollTop = listContainer.scrollHeight;
@@ -67,19 +82,14 @@
         </span>
       </div>
       <div class="meta-col">
-        <span class="start-time">{formatStartTime(entry.startTime)}</span>
-        <span class="status"
-          >{entry.status === "pending"
-            ? "..."
-            : (entry.grpcStatus ?? "-")}</span
-        >
-        <span class="time"
-          >{entry.duration
+        <span class="time">
+          {entry.duration
             ? `${Number(entry.duration).toFixed(2)}ms`
             : entry.status === "pending"
               ? "..."
-              : "0.00ms"}</span
-        >
+              : ""}
+        </span>
+        <span class="start-time">{formatStartTime(entry.startTime)}</span>
       </div>
     </div>
   {/each}
@@ -108,7 +118,6 @@
     border-bottom: 1px solid #f3f4f6;
     cursor: pointer;
     transition: background 0.2s;
-    min-width: 400px; /* 增加寬度以容納時間戳 */
   }
 
   .row:hover {
@@ -124,6 +133,8 @@
     align-items: center;
     gap: 8px;
     overflow: hidden;
+    min-width: 100px;
+    flex: 1;
   }
 
   .dot {
@@ -179,15 +190,8 @@
   .meta-col {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 16px;
     flex-shrink: 0;
-  }
-
-  .status {
-    font-size: 11px;
-    color: #6b7280;
-    width: 20px;
-    text-align: right;
   }
 
   .start-time {
@@ -200,7 +204,7 @@
   .time {
     font-size: 11px;
     color: #9ca3af;
-    width: 65px;
+    min-width: 70px;
     text-align: right;
     font-family: monospace;
   }

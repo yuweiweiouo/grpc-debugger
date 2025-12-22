@@ -1,4 +1,10 @@
 <script>
+  /**
+   * 應用程序主入口 (Main App Component)
+   * 
+   * 負責組裝側邊欄、頂部工具欄以及主內容區域，
+   * 並根據 activePage 狀態切換不同的視圖。
+   */
   import { onMount, onDestroy } from "svelte";
   import Sidebar from "./components/Sidebar.svelte";
   import Toolbar from "./components/Toolbar.svelte";

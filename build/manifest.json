@@ -1,6 +1,6 @@
 {
   "name": "gRPC Debugger",
-  "version": "1.2.3",
+  "version": "1.2.8",
   "manifest_version": 3,
   "description": "Powerful gRPC and Connect-RPC debugging (Stable v2.16). gRPC-Web network debugger with automatic request interception and protobuf decoding. Enhanced time precision and timestamps.",
   "author": "魚尾尾",

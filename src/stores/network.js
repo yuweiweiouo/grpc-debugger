@@ -1,25 +1,43 @@
+/**
+ * 網路狀態管理 (Network Store)
+ * 
+ * 這是 Debugger 的數據中心，負責：
+ * 1. 儲存與過濾網路請求紀錄 (gRPC Calls)。
+ * 2. 實作複雜的解碼管線 (Extraction Pipeline)：處理 Base64、Gzip、gRPC Framing。
+ * 3. 處理多來源同步 (Merge Logic)：合併來自 HAR 檔案與即時攔截的請求數據。
+ */
+
 import { writable, derived, get } from 'svelte/store';
 import { protoEngine } from '../lib/proto-engine';
 import { tryAutoReflection, hasReflected, services } from './schema';
 
+// 原始日誌陣列
 export const log = writable([]);
+// UI 過濾關鍵字
 export const filterValue = writable('');
+// 目前選擇的日誌索引
 export const selectedIdx = writable(null);
+// 是否在清除時保留紀錄 (Preserve Log)
 export const preserveLog = writable(true);
 
+/**
+ * 衍生日誌 (Filtered Log)
+ * 根據使用者輸入的關鍵字以及服務的隱藏設定進行即時過濾。
+ */
 export const filteredLog = derived(
   [log, filterValue, services],
   ([$log, $filterValue, $services]) => {
-    // 獲取所有隱藏服務的名稱
+    // 獲取所有使用者標記為隱藏的服務名稱
     const hiddenServiceNames = $services.filter(s => s.hidden).map(s => s.fullName);
 
     return $log.filter(entry => {
-      // 檢查此請求是否屬於隱藏服務 (例如 /pkg.Service/Method)
+      // 1. 隱藏過濾：若該請求屬於被隱藏的服務，則不顯示
       const isHidden = hiddenServiceNames.some(serviceName => 
         entry.method && entry.method.startsWith(`/${serviceName}/`)
       );
       if (isHidden) return false;
 
+      // 2. 關鍵字過濾：比對方法名或 Endpoint
       if (!$filterValue) return true;
       const lowerFilter = $filterValue.toLowerCase();
       return (
@@ -30,6 +48,9 @@ export const filteredLog = derived(
   }
 );
 
+/**
+ * 目前選擇的日誌條目
+ */
 export const selectedEntry = derived(
   [filteredLog, selectedIdx],
   ([$filteredLog, $selectedIdx]) => {
@@ -39,31 +60,35 @@ export const selectedEntry = derived(
 );
 
 /**
- * 新增網路日誌
- * 1. 先確保 reflection 完成（如果需要）
- * 2. 使用正確的 schema 解碼
- * 3. 如果是首次載入 schema，重新處理舊 logs
+ * 新增網路日誌 (Main Entry Point)
+ * 
+ * 流程：
+ * 1. 格式化 Endpoint。
+ * 2. 自動嘗試反射 (Auto-Reflection) 以獲取對應的 Schema。
+ * 3. 執行解碼管線將二進位轉為 JS 物件。
+ * 4. 合併邏輯：防止重複顯示相同的請求 (支援從不同來源更新同一個請求狀態)。
+ * 
+ * @param {object} entry 請求條目物件
  */
 export async function addLog(entry) {
+  // 從 /pkg.Service/Method 提取最後的 Method 名稱作為顯示用
   if (entry.method) {
     const parts = entry.method.split("/");
     entry.endpoint = parts.pop() || parts.pop();
   }
 
-  // 確保 reflection 完成後再解碼
+  // 自動同步：若遇到未知的 URL，嘗試進行 gRPC 反射
   const isNewSchema = await tryAutoReflection(entry.url);
   
-  // 解碼（此時 schema 已確定）
+  // 執行解碼流程
   await processEntry(entry);
   
-  // v2.10: 雙流同步處理 - 檢查是否已存在相同 ID 的請求
-  let isMerged = false;
+  // 合併與更新邏輯 (Prevent Duplicates)
   log.update(list => {
-    // 1. 精確 ID 匹配 (最優先)
+    // 優先使用精確 ID 匹配 (由攔截器或 HAR 產生)
     let existingIdx = list.findIndex(e => e.id === entry.id);
     
-    // 2. 模糊匹配 (防止 Race Condition 導致 ID 不同但內容相同)
-    // 條件：同一個 Method 且啟動時間相差 1.5 秒以內，且目前是 Pending 狀態
+    // 若 ID 不存在，嘗試模糊匹配 (處理跨來源但內容相同的請求)
     if (existingIdx === -1) {
       existingIdx = list.findIndex(e => 
         e.method === entry.method && 
@@ -74,57 +99,46 @@ export async function addLog(entry) {
 
     if (existingIdx !== -1) {
       const newList = [...list];
-      // 合併數據，以 entry (HAR/Finished) 提供的資訊為主，但保留之前的 requestRaw (如果是攔截到的)
+      // 合併數據：保留已有的攔截數據，並補全剩餘資訊
       newList[existingIdx] = { 
         ...newList[existingIdx], 
         ...entry,
-        // 如果原本已經有 request (攔截到的)，保留它
         request: entry.request || newList[existingIdx].request,
         requestRaw: entry.requestRaw || newList[existingIdx].requestRaw,
         status: entry.status || 'finished'
       };
-      isMerged = true;
       return newList;
     }
     return [...list, entry];
   });
 
-  // 如果剛載入了新 schema，重新處理之前的所有 logs
+  // 如果有新產生的 Schema，則觸發「全局重新解析」以修復先前因缺少 Schema 而解析失敗的舊紀錄
   if (isNewSchema) {
     await reprocessAllLogs();
   }
 }
 
 /**
- * 重新處理所有日誌（在 schema 載入後呼叫）
+ * 重新處理所有日誌
+ * 當 Reflection 成功後，我們可以回頭解析那些之前顯示為 "No Schema" 的請求。
  */
 export async function reprocessAllLogs() {
   const currentLogs = get(log);
   
-  if (!currentLogs || currentLogs.length === 0) {
-    console.debug(`[Network] No logs to reprocess`);
-    return;
-  }
+  if (!currentLogs || currentLogs.length === 0) return;
 
-  console.debug(`[Network] Reprocessing ${currentLogs.length} entries`);
-  console.debug(`[Network] serviceMap size: ${protoEngine.serviceMap.size}`);
-  console.debug(`[Network] schemas size: ${protoEngine.schemas.size}`);
-  
-  if (protoEngine.serviceMap.size > 0) {
-    console.debug(`[Network] Available methods:`, [...protoEngine.serviceMap.keys()]);
-  }
-
-  // 強制重新解碼所有有原始資料的 entries
+  // 對所有具備原始資料的項目執行重新解碼
   await Promise.all(
     currentLogs.map(entry => processEntry(entry, true))
   );
   
-  // 觸發 UI 更新
+  // 通知 Svelte 更新 UI
   log.set([...currentLogs]);
-  
-  console.debug(`[Network] Reprocessing complete`);
 }
 
+/**
+ * 清除所有日誌
+ */
 export function clearLogs(force = false) {
   if (get(preserveLog) && !force) return;
   log.set([]);
@@ -132,14 +146,12 @@ export function clearLogs(force = false) {
 }
 
 /**
- * 處理單一 entry 的解碼
- * @param {object} entry
- * @param {boolean} forceReprocess - 強制重新解碼
+ * 核心處理：將 entry 中的 Raw 資料轉換為可讀物件
  */
 async function processEntry(entry, forceReprocess = false) {
   const methodInfo = protoEngine.findMethod(entry.method);
   
-  // Request 解碼
+  // 處理請求資料解碼
   if (entry.requestRaw && (forceReprocess || !entry.request)) {
     try {
       const payload = await extractPayload(entry.requestRaw, entry.requestBase64Encoded, entry.requestHeaders);
@@ -152,12 +164,11 @@ async function processEntry(entry, forceReprocess = false) {
     }
   }
 
-  // Response 解碼
+  // 處理回應資料解碼
   if (entry.responseRaw && (forceReprocess || !entry.response)) {
     try {
       const payload = await extractPayload(entry.responseRaw, entry.responseBase64Encoded, entry.responseHeaders);
       const typeName = methodInfo?.responseType || null;
-      
       if (payload) {
         entry.response = protoEngine.decodeMessage(typeName, payload);
       }
@@ -168,34 +179,32 @@ async function processEntry(entry, forceReprocess = false) {
 }
 
 // ============================================================================
-// Payload Extraction Utilities
+// 解碼管線工具 (Extraction Pipeline Utilities)
+// 處理各種網路層的編碼與封裝
 // ============================================================================
 
 /**
- * 從原始資料提取 Protobuf payload（主協調函數）
- * @param {string | Uint8Array} data - 原始資料
- * @param {boolean} isBase64 - 是否需要 Base64 解碼
- * @param {object} headers - HTTP headers
- * @returns {Promise<Uint8Array>} - 解碼後的 payload
+ * 從各種混雜格式中提取出純粹的 Protobuf Payload
+ * 管線順序：Base64 轉原文字節 -> 處理 gRPC-Web-Text 多重編碼 -> Gzip 解壓 -> gRPC Framing 剝離
  */
 async function extractPayload(data, isBase64, headers = {}) {
   const contentType = (headers['content-type'] || '').toLowerCase();
   
-  // Step 1: 初始 Base64 解碼
+  // 1. 初始轉換為 Uint8Array
   let buffer = decodeInitialData(data, isBase64);
   
-  // Step 2: 處理 grpc-web-text 雙層 Base64
+  // 2. 處理 grpc-web-text 特有的雙層 Base64 (整個 Body 都是 Base64)
   if (contentType.includes('grpc-web-text')) {
     buffer = handleGrpcWebText(buffer);
   }
   
-  // Step 3: 全域 Gzip 解壓
+  // 3. 處理 Gzip 壓縮內容
   const encoding = (headers['grpc-encoding'] || headers['connect-content-encoding'] || '').toLowerCase();
   if (encoding === 'gzip') {
     buffer = await decompressGzip(buffer);
   }
   
-  // Step 4: 提取 gRPC Framing
+  // 4. 剝離 gRPC Framing (移除 5-byte 的 Length-Prefixed 標頭)
   const isGrpc = contentType.includes('grpc') || contentType.includes('connect');
   if (isGrpc) {
     const extracted = await extractGrpcFrames(buffer);
@@ -206,7 +215,7 @@ async function extractPayload(data, isBase64, headers = {}) {
 }
 
 /**
- * 初始資料解碼（Base64 或字串轉 Uint8Array）
+ * 處理資料來源的初始二進位化
  */
 function decodeInitialData(data, isBase64) {
   if (typeof data === 'string') {
@@ -218,13 +227,13 @@ function decodeInitialData(data, isBase64) {
 }
 
 /**
- * 處理 grpc-web-text 的雙層 Base64 問題
- * HAR 可能會先 Base64 編碼，然後資料本身又是 Base64
+ * 解碼 grpc-web-text 的文字流
+ * 此格式會將二進位資料重新以 Base64 編碼為可見字串以通過某些代理服務器。
  */
 function handleGrpcWebText(buffer) {
   if (buffer.length === 0) return buffer;
   
-  // 檢查是否已經是二進位資料（包含不可列印字元或以 gRPC frame flag 開頭）
+  // 簡易檢測：若高機率已經是二進位（包含大量不可見字元），則不需再次 Base64 解析
   let nonPrintable = 0;
   const checkLen = Math.min(buffer.length, 64);
   for (let i = 0; i < checkLen; i++) {
@@ -235,12 +244,11 @@ function handleGrpcWebText(buffer) {
   const isBinary = nonPrintable / checkLen > 0.1 || buffer[0] === 0 || buffer[0] === 1;
   if (isBinary) return buffer;
   
-  // 嘗試 Base64 解碼
   try {
     const text = new TextDecoder().decode(buffer).replace(/[^A-Za-z0-9+/=]/g, '');
     if (text.length <= 4) return buffer;
     
-    // 修正 padding
+    // 修正 Base64 Padding 並還原二進位
     let cleanText = text.replace(/=/g, '');
     while (cleanText.length % 4 !== 0) cleanText += '=';
     
@@ -256,7 +264,7 @@ function handleGrpcWebText(buffer) {
 }
 
 /**
- * Gzip 解壓縮
+ * 使用主流瀏覽器內建的 DecompressionStream 進行解壓
  */
 async function decompressGzip(buffer) {
   if (typeof DecompressionStream === 'undefined') return buffer;
@@ -282,14 +290,14 @@ async function decompressGzip(buffer) {
     }
     return result;
   } catch (e) {
-    console.warn('[Network] Gzip decompression failed:', e);
+    console.warn('[Network] Gzip 解壓失敗:', e);
     return buffer;
   }
 }
 
 /**
- * 提取 gRPC Length-Prefixed Framing 中的資料
- * 返回 null 表示沒有有效的 framing
+ * 剝離 gRPC LPM (Length-Prefixed Framing)
+ * 格式：[Flags:1b] [Length:4b] [Payload:Nb]
  */
 async function extractGrpcFrames(buffer) {
   let pos = 0;
@@ -304,31 +312,26 @@ async function extractGrpcFrames(buffer) {
     const start = pos + 5;
     const end = start + length;
     
-    if (end > buffer.length) {
-      console.warn(`[extractPayload] Frame length ${length} exceeds buffer ${buffer.length}`);
-      break;
-    }
+    if (end > buffer.length) break;
     
-    // gRPC Flags: bit 0 = compression, bit 7 = trailers
+    // 僅處理 Data Frame (Bit 7 為 0)
     const isCompressed = (flags & 0x01) === 0x01;
     const isData = (flags & 0x80) === 0;
     
     if (isData) {
       let chunk = buffer.slice(start, end);
-      
+      // 若標頭顯示此 Frame 單獨被壓縮，則遞迴解壓
       if (isCompressed && length > 0) {
         chunk = await decompressGzip(chunk);
       }
-      
       messageChunks.push(chunk);
     }
-    
     pos = end;
   }
   
   if (!hasFraming) return null;
   
-  // 合併所有資料塊
+  // 合併多個 Frames (處理 Streaming 的情況)
   const totalLen = messageChunks.reduce((acc, c) => acc + c.length, 0);
   const combined = new Uint8Array(totalLen);
   let offset = 0;
@@ -338,3 +341,4 @@ async function extractGrpcFrames(buffer) {
   }
   return combined;
 }
+
