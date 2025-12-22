@@ -1,4 +1,13 @@
 <script>
+  /**
+   * 請求詳情面板 (Network Details)
+   * 
+   * 展示選定請求的所有細節，包含：
+   * 1. 標頭 (Headers) 與 一般資訊。
+   * 2. 解碼後的請求與回應 JSON 樹。
+   * 3. 原始 Proto 欄位定義。
+   * 4. 支援將解碼後的資歷導出為 JSON 文字。
+   */
   import { selectedEntry } from "../stores/network";
   import { protoEngine } from "../lib/proto-engine";
   import { t } from "../lib/i18n";
@@ -8,6 +17,7 @@
   let activeTab = "request";
   let copyFeedback = "";
 
+  // 反應式數據流：當 Store 中的 selectedEntry 改變時，自動重新計算相應的 Proto 定義與訊息結構
   $: entry = $selectedEntry;
   $: protoDef = entry ? protoEngine.findMethod(entry.method) : null;
   $: requestMsg = protoDef
@@ -24,7 +34,15 @@
   let showCopyModal = false;
   let copyText = "";
 
+  /**
+   * JSON 序列化輔助函數
+   * 1. 過濾掉 $typeName 內部屬性
+   * 2. 處理 BigInt 與 Uint8Array 特殊類型
+   */
   function jsonReplacer(key, value) {
+    if (key === "$typeName") {
+      return undefined;
+    }
     if (value instanceof Uint8Array) {
       return `[bytes: ${value.length} bytes]`;
     }
@@ -38,7 +56,7 @@
     try {
       copyText = JSON.stringify(data, jsonReplacer, 2);
     } catch (e) {
-      copyText = `Error serializing: ${e.message}`;
+      copyText = `序列化失敗: ${e.message}`;
     }
     showCopyModal = true;
   }
@@ -123,7 +141,7 @@
                 class="copy-btn"
                 on:click={() => openCopyModal(entry.request)}
               >
-                📋 Copy JSON
+                📋 {$t("copy_json")}
               </button>
             {/if}
           </div>
@@ -142,7 +160,7 @@
                 class="copy-btn"
                 on:click={() => openCopyModal(entry.response)}
               >
-                📋 Copy JSON
+                📋 {$t("copy_json")}
               </button>
             {/if}
           </div>
@@ -204,7 +222,7 @@
   >
     <div class="modal-content" on:click|stopPropagation role="dialog">
       <div class="modal-header">
-        <span>Copy JSON</span>
+        <span>{$t("copy_json")}</span>
         <button class="modal-close" on:click={closeCopyModal}>✕</button>
       </div>
       <textarea
@@ -213,7 +231,7 @@
         value={copyText}
         on:focus={selectAllText}
       ></textarea>
-      <p class="modal-hint">Press Ctrl+C (or Cmd+C) to copy</p>
+      <p class="modal-hint">{$t("copy_hint")}</p>
     </div>
   </div>
 {/if}

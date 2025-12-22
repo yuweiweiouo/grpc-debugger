@@ -1,7 +1,15 @@
 /**
- * gRPC Reflection Client
- * 負責透過 gRPC Server Reflection API 取得服務定義
- * 使用 @bufbuild/protobuf 官方庫解析 FileDescriptorProto
+ * gRPC Reflection Client (gRPC 反射客戶端)
+ * 
+ * 此模組是連結 Debugger 與後端服務的橋樑。其核心職責是透過 gRPC Server Reflection 協定，
+ * 動態地從執行中的伺服器端獲取所有的服務定義（Service Definitions），而無需預先擁有 .proto 檔案。
+ * 
+ * 流程包含：
+ * 1. 查詢可用的服務列表 (ListServices)。
+ * 2. 根據服務名稱遞迴獲取所有的 FileDescriptorProto (包含依賴項)。
+ * 3. 處理 Google Well-Known Types (WKT) 的補完。
+ * 4. 對取得的描述符進行「拓撲排序」，以滿足 @bufbuild/protobuf 建立 Registry 的嚴格順序要求。
+ * 5. 將結果轉換為 proto-engine 可理解的格式。
  */
 
 import { sendGrpcWebRequest } from './grpc-web-transport.js';
@@ -27,8 +35,9 @@ import {
 const logger = createLogger('Reflection');
 
 /**
- * Well-known types 的 file descriptors 映射
- * 用於在 createFileRegistry resolver 中提供 Google 預設 types
+ * Well-known types (WKT) 映射表
+ * 當使用者的服務依賴於 Google 官方提供的通達類型 (如 Timestamp) 時，
+ * 若伺服器未回傳對應的 .proto 定義，我們會從此預設庫中補全。
  */
 const WKT_FILES = new Map([
   ['google/protobuf/timestamp.proto', file_google_protobuf_timestamp],
@@ -42,7 +51,8 @@ const WKT_FILES = new Map([
 ]);
 
 /**
- * 支援的 Reflection 服務版本
+ * 支援的反射服務路徑
+ * v1 是目前的主流標準，v1alpha 則是較舊的過渡版本。
  */
 const REFLECTION_SERVICES = [
   'grpc.reflection.v1.ServerReflection',
@@ -51,60 +61,59 @@ const REFLECTION_SERVICES = [
 
 class ReflectionClient {
   constructor() {
-    /** @type {Map<string, object>} 快取已反射的定義 */
+    /** @type {Map<string, object>} 用於快取不同伺服器的反射結果 */
     this.cache = new Map();
   }
 
   /**
-   * 從伺服器取得所有服務定義
-   * 返回可直接用於 proto-engine 的結構
-   * @param {string} serverUrl - gRPC 伺服器 URL
-   * @returns {Promise<{services: object[], messages: object, registry: import('@bufbuild/protobuf').FileRegistry | null} | null>}
+   * 主入口：從指定伺服器抓取所有 Proto 定義
+   * 
+   * @param {string} serverUrl gRPC 伺服器的基礎 URL (例如 http://localhost:8080)
+   * @returns {Promise<{services: object[], messages: object, registry: object} | null>}
    */
   async fetchFromServer(serverUrl) {
-    logger.info('Attempting for:', serverUrl);
+    logger.info('正在嘗試連接反射服務於:', serverUrl);
 
+    // 依序嘗試不同的反射版本
     for (const reflectionService of REFLECTION_SERVICES) {
       try {
-        // Step 1: Get service list
+        // 第一階段：獲取服務清單
         const services = await this.listServices(serverUrl, reflectionService);
         if (!services || services.length === 0) continue;
 
-        logger.info('Found services:', services);
+        logger.info('找到服務:', services);
 
-        // Step 2: 收集所有 FileDescriptorProto 二進位資料
-        const allDescriptorBytes = [];
-        const loadedFiles = new Set();
+        // 第二階段：深度探查與收集 FileDescriptor
+        const allDescriptorBytes = []; // 儲存所有收集到的原始二進位定義
+        const loadedFiles = new Set();  // 防止重複載入相同路徑的檔案
 
         /**
-         * 遞迴載入 FileDescriptor 及其依賴
-         * @param {Uint8Array[] | null} descriptorBytes
+         * 遞迴載入函數：處理單個描述符及其所有依賴項
          */
         const loadFileDescriptors = async (descriptorBytes) => {
           if (!descriptorBytes) return;
 
           for (const bytes of descriptorBytes) {
-            // 使用官方 API 解析 FileDescriptorProto
             let descriptor;
             try {
+              // 解析二進位流為結構化的描述符物件
               descriptor = fromBinary(FileDescriptorProtoSchema, bytes);
             } catch (e) {
-              logger.warn('Failed to parse FileDescriptorProto:', e.message);
+              logger.warn('無法解析 FileDescriptorProto:', e.message);
               continue;
             }
 
-            // Skip if already loaded
             if (loadedFiles.has(descriptor.name)) continue;
             loadedFiles.add(descriptor.name);
             
-            // 保存原始 bytes
             allDescriptorBytes.push(bytes);
 
-            // Recursively load dependencies
+            // 處理依賴項 (import "...")
             for (const depName of descriptor.dependency || []) {
               if (loadedFiles.has(depName)) continue;
 
               try {
+                // 向伺服器請求依賴檔案的定義
                 const depDescriptorBytes = await this.getFileByFilename(
                   serverUrl,
                   reflectionService,
@@ -114,13 +123,16 @@ class ReflectionClient {
                   await loadFileDescriptors(depDescriptorBytes);
                 }
               } catch (e) {
-                logger.debug(`Could not load dependency: ${depName}`);
+                logger.debug(`無法載入依賴檔: ${depName}`);
+                // 注意：如果依賴的是 Google WKT，後面會有補全機制，故此處失敗不一定導致整體失敗
               }
             }
           }
         };
 
+        // 為每個發現的服務抓取完整的符號定義
         for (const serviceName of services) {
+          // 跳過反射服務自身
           if (serviceName.includes('grpc.reflection')) continue;
 
           try {
@@ -129,28 +141,19 @@ class ReflectionClient {
               reflectionService,
               serviceName
             );
-
-            console.log(`[ReflectionClient] Got descriptor for ${serviceName}:`, fileDescriptor ? `${fileDescriptor.length} bytes` : 'null');
             await loadFileDescriptors(fileDescriptor);
           } catch (e) {
-            console.error(`[ReflectionClient] Failed to get descriptor for ${serviceName}:`, e);
+            console.error(`無法獲取符號 ${serviceName} 的定義:`, e);
           }
         }
 
-        console.log(`[ReflectionClient] allDescriptorBytes.length = ${allDescriptorBytes.length}`);
-        
         if (allDescriptorBytes.length > 0) {
-          // 使用官方 API 從所有 FileDescriptorProto 建立 FileRegistry
+          // 第三階段：建構全域註冊表
           const result = this._buildRegistryFromBytes(allDescriptorBytes);
-          
-          console.log(`[ReflectionClient] Result: ${result.services.length} services, ${Object.keys(result.messages).length} messages`);
-          
           return result;
-        } else {
-          console.warn(`[ReflectionClient] No descriptors collected!`);
         }
       } catch (e) {
-        console.error(`[ReflectionClient] ${reflectionService} failed:`, e);
+        console.error(`反射版本 ${reflectionService} 執行時發生錯誤:`, e);
       }
     }
 
@@ -158,9 +161,8 @@ class ReflectionClient {
   }
 
   /**
-   * 從 FileDescriptorProto 二進位資料建立 Registry 和 serviceMap
-   * @param {Uint8Array[]} descriptorBytesList
-   * @returns {{services: object[], messages: object, registry: import('@bufbuild/protobuf').FileRegistry | null}}
+   * 內部核心：從蒐集到的位元組建構 Registry
+   * @bufbuild/protobuf 的註冊表非常嚴格，依賴項必須在被依賴項之前註冊。
    */
   _buildRegistryFromBytes(descriptorBytesList) {
     const result = {
@@ -169,83 +171,69 @@ class ReflectionClient {
       registry: null,
     };
 
-    console.log(`[ReflectionClient] _buildRegistryFromBytes: received ${descriptorBytesList.length} descriptors`);
-
-    // 解析所有 FileDescriptorProto
     const fileDescriptors = [];
-    const fileDescriptorMap = new Map(); // name -> FileDescriptorProto
+    const fileDescriptorMap = new Map(); // 用於拓撲排序的快照映射表
     
+    // 解析所有物件並存入地圖
     for (const bytes of descriptorBytesList) {
       try {
         const fd = fromBinary(FileDescriptorProtoSchema, bytes);
         fileDescriptors.push(fd);
         fileDescriptorMap.set(fd.name, fd);
-        console.log(`[ReflectionClient] Parsed: ${fd.name}, messages: ${fd.messageType?.length || 0}, services: ${fd.service?.length || 0}`);
       } catch (e) {
-        console.error('[ReflectionClient] Failed to parse FileDescriptorProto:', e);
+        console.error('FileDescriptorProto 解析損毀:', e);
       }
     }
 
-    console.log(`[ReflectionClient] Total parsed: ${fileDescriptors.length} file descriptors`);
-
-    // 建立 FileRegistry
-    // 關鍵：createFileRegistry 要求檔案按拓撲順序排列（依賴項在前）
     if (fileDescriptors.length > 0) {
-      // 將 WKT 加入 fileDescriptorMap（作為依賴解析用）
+      // 關鍵步驟 1：加入預設的 Google WKT 定義，補齊伺服器可能漏傳的「公共組件」
       for (const [name, wktFile] of WKT_FILES.entries()) {
         if (!fileDescriptorMap.has(name) && wktFile.proto) {
           fileDescriptorMap.set(name, wktFile.proto);
         }
       }
 
-      // 拓撲排序：確保依賴項在被依賴項之前
+      // 關鍵步驟 2：拓撲排序 (Topological Sort)
+      // 這確保了例如 'common.proto' 一定會排在 'user.proto' (若 user 引用了 common) 之前
       const sortedProtos = this._topologicalSort(fileDescriptorMap);
-      console.log(`[ReflectionClient] Topologically sorted ${sortedProtos.length} protos`);
 
       let registry = null;
       try {
+        // 嘗試建構正式的 FileDescriptorSet
         const descriptorSet = create(FileDescriptorSetSchema, { file: sortedProtos });
         registry = createFileRegistry(descriptorSet);
-        console.log(`[ReflectionClient] Registry created successfully with ${sortedProtos.length} descriptors`);
       } catch (e) {
-        console.error('[ReflectionClient] Failed to create registry:', e.message);
+        console.error('註冊表建構失敗 (傳統模式):', e.message);
         
-        // Fallback: 使用 functional resolver 模式
+        // 備援方案：使用 functional resolver，由 SDK 動態按需解析依賴
         try {
           const resolver = (name) => WKT_FILES.get(name)?.proto || fileDescriptorMap.get(name);
           registry = createFileRegistry(fileDescriptors[0], resolver);
-          console.log(`[ReflectionClient] Registry created via functional resolver fallback`);
         } catch (eFallback) {
-          console.error('[ReflectionClient] All registry creation methods failed:', eFallback.message);
+          console.error('註冊表所有建構方法均告失敗:', eFallback.message);
         }
       }
 
       if (registry) {
         result.registry = registry;
-      }
-    }
-
-    // 從 registry 提取 services 和 messages（向後兼容格式）
-    if (result.registry) {
-      for (const desc of result.registry) {
-        if (desc.kind === 'message') {
-          // 將 DescMessage 轉換為舊格式
-          result.messages[desc.typeName] = this._descMessageToLegacy(desc);
-        } else if (desc.kind === 'service') {
-          result.services.push(this._descServiceToLegacy(desc));
+        
+        // 第四階段：轉換為向後兼容的 Legacy 格式供舊版 UI/Engine 使用
+        for (const desc of registry) {
+          if (desc.kind === 'message') {
+            result.messages[desc.typeName] = this._descMessageToLegacy(desc);
+          } else if (desc.kind === 'service') {
+            result.services.push(this._descServiceToLegacy(desc));
+          }
         }
       }
-    } else {
-      console.warn(`[ReflectionClient] Registry is null!`);
     }
 
     return result;
   }
 
   /**
-   * 將 DescMessage 轉換為舊格式
-   * @param {import('@bufbuild/protobuf').DescMessage} desc
-   * @returns {object}
+   * 將現代格式轉換為傳統結構
+   * Debugger 的 UI 層有些部分仍依賴舊式的 fullName 與 fields 陣列結構。
    */
   _descMessageToLegacy(desc) {
     return {
@@ -255,73 +243,60 @@ class ReflectionClient {
         name: f.name,
         number: f.number,
         type: this._fieldKindToType(f),
-        label: f.repeated ? 3 : f.proto.label || 1, // 3 = REPEATED
+        label: f.repeated ? 3 : f.proto.label || 1, // 3 代表 REPEATED, 1 代表 OPTIONAL/REQUIRED
         type_name: f.message?.typeName || f.enum?.typeName || '',
       })),
-      // 保留原始 desc 以便使用官方 API 解碼
-      _desc: desc,
+      _desc: desc, // 將原始描述符塞入隠藏欄位，供 Engine 調用官方 decode 邏輯
     };
   }
 
   /**
-   * 將 Field 種類轉換為 type 數字
-   * @param {import('@bufbuild/protobuf').DescField} f
-   * @returns {number}
+   * 類型映射轉換
+   * 將 SDK 的枚舉或描述符類型轉回 Protobuf 標準數值 1-18。
    */
   _fieldKindToType(f) {
-    // 優先從原始 proto 定義取得類型 (FieldDescriptorSet)
-    // 這是最底層的真實數據，不會因為庫的封裝而讀不到
+    // 優先從原始 proto 資料中提取真實類型
     if (f.proto && typeof f.proto.type === 'number') {
       return f.proto.type;
     }
-
-    // Fallback: 根據 kind 判定
-    if (f.kind === 'message' || f.kind === 'map') return 11;
-    if (f.kind === 'enum') return 14;
+    // 備援邏輯：根據 kind 推斷
+    if (f.kind === 'message' || f.kind === 'map') return 11; // TYPE_MESSAGE
+    if (f.kind === 'enum') return 14;                        // TYPE_ENUM
     if (f.kind === 'scalar') {
-      return f.scalar || 9; // 最終預設 string(9)
+      return f.scalar || 9; // 預設為 TYPE_STRING
     }
     return 9;
   }
 
   /**
-   * 拓撲排序 FileDescriptorProto
-   * 確保依賴項排在被依賴項之前
-   * @param {Map<string, object>} fileMap - name -> FileDescriptorProto
-   * @returns {object[]} - 排序後的 FileDescriptorProto 陣列
+   * DFS 拓撲排序實現
+   * 對於複雜的 .proto 依賴圖，這是確保註冊不報錯的唯一方式。
    */
   _topologicalSort(fileMap) {
     const sorted = [];
     const visited = new Set();
-    const visiting = new Set(); // 用於偵測循環依賴
+    const visiting = new Set(); // 用於循環依賴偵測
 
     const visit = (name) => {
       if (visited.has(name)) return;
       if (visiting.has(name)) {
-        // 循環依賴，跳過避免無限遞迴
-        console.warn(`[ReflectionClient] Circular dependency detected: ${name}`);
+        logger.warn(`偵測到循環依賴: ${name}，已略過以防止無窮遞迴`);
         return;
       }
 
       const fd = fileMap.get(name);
-      if (!fd) {
-        // 找不到依賴，可能是外部庫，跳過
-        return;
-      }
+      if (!fd) return;
 
       visiting.add(name);
-
-      // 先處理所有依賴
       for (const dep of fd.dependency || []) {
         visit(dep);
       }
-
       visiting.delete(name);
+      
       visited.add(name);
       sorted.push(fd);
     };
 
-    // 訪問所有檔案
     for (const name of fileMap.keys()) {
       visit(name);
     }
@@ -329,11 +304,6 @@ class ReflectionClient {
     return sorted;
   }
 
-  /**
-   * 將 DescService 轉換為舊格式
-   * @param {import('@bufbuild/protobuf').DescService} desc
-   * @returns {object}
-   */
   _descServiceToLegacy(desc) {
     return {
       name: desc.name,
@@ -347,27 +317,26 @@ class ReflectionClient {
   }
 
   /**
-   * 列出伺服器上的所有服務
-   * @param {string} serverUrl
-   * @param {string} reflectionService
-   * @returns {Promise<string[] | null>}
+   * 實現與 ServerReflectionInfo 的手動通訊 (ListServices)
+   * 由於 Reflection 是基於 gRPC Stream 但我們在 Web 端是 Request-Response 模型，
+   * 我們必須人工封裝 ReflectionRequest 並解析 Data Frames。
    */
   async listServices(serverUrl, reflectionService) {
     const url = `${serverUrl}/${reflectionService}/ServerReflectionInfo`;
     const host = new URL(serverUrl).host;
 
-    // Encode: host = host (field 1), list_services = "" (field 7)
+    // 手動構建 ReflectionRequest (field 1 is host, field 7 is list_services)
     const hostBytes = new TextEncoder().encode(host);
     const request = new Uint8Array(2 + hostBytes.length + 2);
 
     let offset = 0;
-    request[offset++] = 0x0a; // field 1, wire type 2
+    request[offset++] = 0x0a; // field 1, wire type 2 (bytes/string)
     request[offset++] = hostBytes.length;
     request.set(hostBytes, offset);
     offset += hostBytes.length;
 
     request[offset++] = 0x3a; // field 7, wire type 2
-    request[offset++] = 0x00; // length 0
+    request[offset++] = 0x00; // length 0 (表示空的 list_services 操作)
 
     const responses = await sendGrpcWebRequest(url, request);
     if (!responses) return null;
@@ -380,11 +349,7 @@ class ReflectionClient {
   }
 
   /**
-   * 取得包含指定 symbol 的 FileDescriptor
-   * @param {string} serverUrl
-   * @param {string} reflectionService
-   * @param {string} symbol - 完整的 service 或 message 名稱
-   * @returns {Promise<Uint8Array[] | null>}
+   * 手動封裝：透過符號查詢 FileDescriptor (getFileContainingSymbol)
    */
   async getFileContainingSymbol(serverUrl, reflectionService, symbol) {
     const url = `${serverUrl}/${reflectionService}/ServerReflectionInfo`;
@@ -396,12 +361,12 @@ class ReflectionClient {
     const request = new Uint8Array(2 + hostBytes.length + 2 + symbolBytes.length);
     let offset = 0;
 
-    request[offset++] = 0x0a; // field 1, wire type 2
+    request[offset++] = 0x0a; // field 1
     request[offset++] = hostBytes.length;
     request.set(hostBytes, offset);
     offset += hostBytes.length;
 
-    request[offset++] = 0x22; // field 4, wire type 2
+    request[offset++] = 0x22; // field 4, wire type 2 (file_containing_symbol)
     request[offset++] = symbolBytes.length;
     request.set(symbolBytes, offset);
 
@@ -416,11 +381,7 @@ class ReflectionClient {
   }
 
   /**
-   * 透過檔名取得 FileDescriptor
-   * @param {string} serverUrl
-   * @param {string} reflectionService
-   * @param {string} filename
-   * @returns {Promise<Uint8Array[] | null>}
+   * 手動封裝：透過檔名查詢 FileDescriptor (getFileByFilename)
    */
   async getFileByFilename(serverUrl, reflectionService, filename) {
     const url = `${serverUrl}/${reflectionService}/ServerReflectionInfo`;
@@ -432,12 +393,12 @@ class ReflectionClient {
     const request = new Uint8Array(2 + hostBytes.length + 2 + filenameBytes.length);
     let offset = 0;
 
-    request[offset++] = 0x0a; // field 1, wire type 2
+    request[offset++] = 0x0a; // field 1
     request[offset++] = hostBytes.length;
     request.set(hostBytes, offset);
     offset += hostBytes.length;
 
-    request[offset++] = 0x1a; // field 3, wire type 2
+    request[offset++] = 0x1a; // field 3, wire type 2 (file_by_filename)
     request[offset++] = filenameBytes.length;
     request.set(filenameBytes, offset);
 
@@ -453,3 +414,4 @@ class ReflectionClient {
 }
 
 export default new ReflectionClient();
+

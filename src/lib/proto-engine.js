@@ -1,10 +1,10 @@
 /**
- * Proto Engine - 使用 @bufbuild/protobuf 官方庫進行動態解碼
+ * Proto Engine - 基於 @bufbuild/protobuf 官方庫的動態編解碼引擎
  * 
- * 這個模組負責：
- * 1. 儲存從 Reflection API 取得的 FileRegistry
- * 2. 根據 method path 查找對應的 request/response types
- * 3. 使用官方 fromBinary 解碼 protobuf messages
+ * 此核心模組是整個 Debugger 的「大腦」，負責處理：
+ * 1. 儲存與組合從 Reflection API 取得的 Protobuf 描述符 (FileRegistry)。
+ * 2. 建立方法路徑 (/package.Service/Method) 與具體類型定義之間的對應。
+ * 3. 動態地將二進位 Protobuf 資料轉換為易懂的 JavaScript JSON 物件，並處理各類特殊情況。
  */
 
 import { 
@@ -16,40 +16,54 @@ import {
 } from '@bufbuild/protobuf/wkt';
 
 /**
- * ProtoEngine 類別 - 管理 protobuf schema 和解碼
+ * ProtoEngine 類別：管理全域 Protobuf Schema 定義與訊息轉換邏輯
  */
 class ProtoEngine {
   constructor() {
-    /** @type {import('@bufbuild/protobuf').FileRegistry | null} */
+    /** 
+     * @type {import('@bufbuild/protobuf').FileRegistry | null} 
+     * 官方 Registry 物件，用於查找訊息 (Message) 與服務 (Service) 定義。
+     */
     this.registry = null;
     
-    /** @type {Map<string, {serviceName: string, methodName: string, requestType: string, responseType: string}>} */
+    /** 
+     * 方法對應表
+     * Key: "/package.Service/Method"
+     * Value: 具備 Service、Method 及 Request/Response 類型名稱的資訊。
+     * @type {Map<string, {serviceName: string, methodName: string, requestType: string, responseType: string}>} 
+     */
     this.serviceMap = new Map();
     
-    /** @type {Map<string, object>} 向後兼容的 schemas - 儲存 message name 到 DescMessage 的映射 */
+    /** 
+     * 訊息定義映射表 (向後兼容用)
+     * 儲存 TypeName 到 DescMessage 的映射，確保即便 Registry 未完全就緒也能進行基本查詢。
+     * @type {Map<string, object>} 
+     */
     this.schemas = new Map();
   }
 
   /**
-   * 從 FileDescriptorSet 二進位資料註冊 schema
-   * @param {Uint8Array} fileDescriptorSetBytes - FileDescriptorSet 二進位資料
+   * 註冊 Schema：從 FileDescriptorSet 二進位資料載入
+   * FileDescriptorSet 是一組編譯後的 .proto 檔案定義，Reflection API 會回傳此格式。
+   * 
+   * @param {Uint8Array} fileDescriptorSetBytes FileDescriptorSet 的原始二進位字節
    */
   registerFromBytes(fileDescriptorSetBytes) {
     try {
-      // 使用官方 API 解析 FileDescriptorSet
+      // 1. 使用官方 Schema 定義解析接收到的二進位資料
       const fileDescriptorSet = fromBinary(FileDescriptorSetSchema, fileDescriptorSetBytes);
       
-      // 從 FileDescriptorSet 建立 FileRegistry
-      // @bufbuild/protobuf v2 正確用法：直接傳入 FileDescriptorSet message
+      // 2. 建立官方註冊表物件。此物件允許我們透過名稱動態查詢定義。
       this.registry = createFileRegistry(fileDescriptorSet);
       
-      // 遍歷 registry 建立 serviceMap 和向後兼容的 schemas
+      // 3. 掃描所有載入的定義，建立內部的索引以便快速查核
       for (const desc of this.registry) {
         if (desc.kind === 'message') {
+          // 儲存訊息類型定義
           this.schemas.set(desc.typeName, desc);
         } else if (desc.kind === 'service') {
+          // 遍歷服務中的所有方法，建立路徑索引 (為了匹配 Network 請求中的 URL)
           for (const method of desc.methods) {
-            // 標準路徑：/package.Service/Method
             const path = `/${desc.typeName}/${method.name}`;
             this.serviceMap.set(path, {
               serviceName: desc.typeName,
@@ -61,28 +75,29 @@ class ProtoEngine {
         }
       }
       
-      console.log(`[ProtoEngine] Registered ${this.schemas.size} messages, ${this.serviceMap.size} methods`);
+      console.log(`[ProtoEngine] 成功註冊：${this.schemas.size} 個訊息，${this.serviceMap.size} 個方法`);
     } catch (e) {
-      console.error('[ProtoEngine] Failed to register schema:', e);
+      console.error('[ProtoEngine] Schema 註冊失敗:', e);
     }
   }
 
   /**
-   * 使用舊格式的 schema data 註冊（向後兼容）
-   * 這個方法保留用於與現有 reflection-client.js 的兼容
-   * @param {object} data - { services: [], messages: {} }
+   * 註冊 Schema (向後兼容模式)
+   * 用於銜接舊版實現或外部匯入的結構定義物件。
+   * @param {object} data 包含 services 與 messages 的結構化物件
    */
   registerSchema(data) {
+    // 處理訊息定義
     if (data.messages) {
       for (const [fullName, def] of Object.entries(data.messages)) {
         const key = fullName.replace(/^\.+/, '');
         this.schemas.set(key, def);
       }
     }
+    // 處理服務與方法定義
     if (data.services) {
       for (const service of data.services) {
         for (const method of service.methods) {
-          // 確保 serviceName 一致（移除前導點）
           const serviceName = service.fullName.replace(/^\.+/, '');
           const path = `/${serviceName}/${method.name}`;
           
@@ -95,30 +110,27 @@ class ProtoEngine {
         }
       }
     }
-    console.log(`[ProtoEngine] registerSchema: schemas.size=${this.schemas.size}, serviceMap.size=${this.serviceMap.size}`);
+    console.log(`[ProtoEngine] 舊版 Schema 註冊完成，共計 ${this.schemas.size} 訊息，${this.serviceMap.size} 方法`);
   }
 
   /**
-   * 根據路徑尋找方法資訊（支援模糊/後綴匹配）
-   * @param {string} path - 請求路徑，例如 "/admin.AdminService/ListPost"
-   * @returns {object | null}
+   * 根據 URL 路徑尋找對應的 gRPC 方法資訊
+   * 支援「完全精確匹配」與「自動後綴匹配」(處理忽略包名等情況)。
+   * 
+   * @param {string} path 請求路徑，例如 "/myapp.Greeter/SayHello"
+   * @returns {object | null} 包含方法定義的資訊物件
    */
   findMethod(path) {
     if (!path) return null;
 
-    // 1. 精確匹配
+    // 1. 完全匹配
     if (this.serviceMap.has(path)) {
       return this.serviceMap.get(path);
     }
 
-    // 2. 寬鬆匹配：嘗試後綴匹配 (對應簡寫路徑)
-    // 例如 path="/admin.AdminService/ListPost"
-    // 可能對應到 "/pan.general.admin.AdminService/ListPost"
+    // 2. 寬鬆匹配：當開發者使用了簡寫或是代理軟體截斷了完整包名時極其受用
     const pathLower = path.toLowerCase();
-    
     for (const [registeredPath, info] of this.serviceMap) {
-      // 如果註冊的路徑以請求的路徑結尾（且前驅字元是點或斜線），則認為匹配
-      // 這裡簡單化：檢查註冊路徑是否以請求路徑結尾
       if (registeredPath.toLowerCase().endsWith(pathLower)) {
         return info;
       }
@@ -128,27 +140,30 @@ class ProtoEngine {
   }
 
   /**
-   * 尋找 message 定義
-   * @param {string} typeName
-   * @returns {object | null}
+   * 查找具體的 Message 描述符 (Descriptor)
+   * 這是解碼二進位數據的前提。
+   * 
+   * @param {string} typeName 完整的類型名稱 (例如 "google.protobuf.Any")
+   * @returns {object | null} 返回 DescMessage 或舊版定義物件
    */
   findMessage(typeName) {
     if (!typeName) return null;
     
+    // 移除開頭的點（這是 Protobuf 名稱系統的標準化步驟）
     const cleanName = typeName.replace(/^\.+/, '');
     
-    // 如果有 registry，優先使用
+    // 優先從官方 Registry 中獲取，這是最準確的來源
     if (this.registry) {
       const desc = this.registry.getMessage(cleanName);
       if (desc) return desc;
     }
     
-    // 向後兼容：使用舊的 schemas Map
+    // 備援方案：從緩存的 schemas Map 中尋找
     if (this.schemas.has(cleanName)) {
       return this.schemas.get(cleanName);
     }
     
-    // 模糊匹配
+    // 後綴匹配備援（處理部分導入類型的命名差異）
     for (const [key, msg] of this.schemas) {
       if (key.endsWith(`.${cleanName}`) || key === cleanName) {
         return msg;
@@ -159,10 +174,12 @@ class ProtoEngine {
   }
 
   /**
-   * 解碼 protobuf message
-   * @param {string | null} typeName - 完整的 message type name
-   * @param {Uint8Array} buffer - protobuf 二進位資料
-   * @returns {object} 解碼後的 JavaScript 物件
+   * 動態解碼 Protobuf 訊息
+   * 將原始字節流透過指定的 schema 轉換為 JS 物件。
+   * 
+   * @param {string | null} typeName 訊息類型名稱
+   * @param {Uint8Array} buffer 原始二進位數據
+   * @returns {object} 解碼後的 JavaScript 物件。發生錯誤時會回傳帶有 _error 標記的物件。
    */
   decodeMessage(typeName, buffer) {
     if (!buffer || buffer.length === 0) {
@@ -171,55 +188,56 @@ class ProtoEngine {
 
     const schema = this.findMessage(typeName);
     
-    // 優先使用 schema._desc（官方 DescMessage）
+    // 確定是否能使用官方 API。官方 v2 庫要求使用 DescMessage 物件。
     const descMessage = schema?._desc || (schema?.kind === 'message' ? schema : null);
     
     if (descMessage && descMessage.kind === 'message') {
       try {
+        // 使用從 registry 獲得的描述符進行解碼
         const message = fromBinary(descMessage, buffer);
+        // 將官方的 Message 物件轉換為純 JS 物件（處理 BigInt 等相容性問題）
         return this._messageToObject(message, descMessage);
       } catch (e) {
-        // 偵測是否為編碼損壞（HAR API 的 postData.text 會損壞 binary）
+        // 錯誤排查：處理 HAR 編碼損壞的問題
+        // 許多瀏覽器開發者工具導出的 HAR 檔案會錯誤地將 binary 視為 UTF-8，導致數據損毀
         const isEncodingCorruption = e.message.includes('wire type') || 
                                       e.message.includes('invalid');
         
         if (isEncodingCorruption) {
-          // 嘗試提取可讀文字作為 fallback
           const rawText = this._tryExtractReadableText(buffer);
           return {
-            _error: 'Binary data corrupted (HAR encoding issue)',
-            _hint: 'Request body contains non-ASCII bytes that were corrupted during capture',
+            _error: '二進位數據損毀 (可能是 HAR 編碼問題)',
+            _hint: '請求內容包含無法被 UTF-8 正確讀取的非 ASCII 位元組，這通常發生在抓包存檔時',
             _typeName: typeName,
             _rawText: rawText,
           };
         }
         
-        console.error(`[ProtoEngine] Decode failed for ${typeName}: ${e.message}`);
-        return { _error: `Decode failed: ${e.message}`, _typeName: typeName };
+        console.error(`[ProtoEngine] 解碼失敗 (${typeName}): ${e.message}`);
+        return { _error: `解碼失敗: ${e.message}`, _typeName: typeName };
       }
     }
     
-    // 找不到 schema，返回錯誤訊息
+    // 無法找到對應 schema 時的處理
     if (!typeName) {
-      return { _error: 'No type name provided', _rawLength: buffer.length };
+      return { _error: '未提供類型名稱', _rawLength: buffer.length };
     }
-    return { _error: `Schema not found for: ${typeName}`, _rawLength: buffer.length };
+    return { _error: `找不到 Schema 定義: ${typeName}`, _rawLength: buffer.length };
   }
 
   /**
-   * 嘗試從損壞的 buffer 中提取可讀文字
-   * @param {Uint8Array} buffer
-   * @returns {string | null}
+   * 異常處理：嘗試從損壞的訊息中提取人類可讀的內容
+   * 當 Schema 不匹配或編碼錯誤時，儘量讓使用者看到一點有用的東西。
    */
   _tryExtractReadableText(buffer) {
     try {
       const text = new TextDecoder('utf-8', { fatal: false }).decode(buffer);
-      // 提取看起來像 UUID 或其他有意義的字串
+      // 偵測 UUID 等常見模式
       const uuids = text.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi);
       if (uuids && uuids.length > 0) {
-        return `Found ${uuids.length} UUID(s): ${uuids.slice(0, 3).join(', ')}${uuids.length > 3 ? '...' : ''}`;
+        return `偵測到疑似 UUID: ${uuids.slice(0, 3).join(', ')}`;
       }
-      // 返回可列印字元
+      // 過濾出僅存的可見字元
       const printable = text.replace(/[^\x20-\x7E]/g, '').trim();
       return printable.length > 10 ? printable.slice(0, 100) + '...' : null;
     } catch {
@@ -228,26 +246,29 @@ class ProtoEngine {
   }
 
   /**
-   * 將 @bufbuild/protobuf Message 轉換為普通 JavaScript 物件
-   * @param {object} message - fromBinary 解碼的 Message
-   * @param {import('@bufbuild/protobuf').DescMessage} schema - DescMessage
-   * @returns {object}
+   * 深層轉換：將官方 Message 物件轉為純 JSON 物件
+   * 具體包含以下特殊處理：
+   * - 加上 $typeName 隱藏欄位供 UI 識別。
+   * - 處理重複欄位 (Repeated)。
+   * - 處理對應表 (Map)。
+   * - 處理大整數 (BigInt) 轉字串，防止 JSON.stringify 崩潰。
+   * 
+   * @param {object} message 解碼後的 Message 物件
+   * @param {import('@bufbuild/protobuf').DescMessage} schema 對應的定義描述符
    */
   _messageToObject(message, schema) {
     const result = {
-      $typeName: schema.typeName, // 保留類型資訊供 UI 顯示標籤，但不顯示為 key
+      $typeName: schema.typeName, // 元數據：用於 UI 顯示類別標籤
     };
     
     for (const field of schema.fields) {
-      // 使用 localName 存取欄位值
+      // 透過官方定義的 localName 穩定存取 JS 欄位
       const value = message[field.localName];
       
-      // 跳過 undefined 值
       if (value === undefined || value === null) continue;
       
-      // 根據欄位類型處理
       switch (field.kind) {
-        case 'message':
+        case 'message': // 處理巢狀訊息
           if (field.repeated) {
             result[field.name] = Array.isArray(value) 
               ? value.map(v => v ? this._messageToObject(v, field.message) : null)
@@ -257,7 +278,7 @@ class ProtoEngine {
           }
           break;
           
-        case 'map':
+        case 'map': // 處理映射表
           result[field.name] = {};
           if (value instanceof Map) {
             for (const [k, v] of value) {
@@ -270,13 +291,12 @@ class ProtoEngine {
           }
           break;
           
-        case 'enum':
-          // 預設傳回 enum 的數值，或是可以根據 field.enum 轉換為名稱
+        case 'enum': // 處理枚舉
           result[field.name] = this._convertValue(value);
           break;
           
         case 'scalar':
-        default:
+        default: // 處理普通純量
           if (field.repeated) {
             result[field.name] = Array.isArray(value)
               ? value.map(v => this._convertValue(v))
@@ -292,22 +312,21 @@ class ProtoEngine {
   }
 
   /**
-   * 轉換特殊值（如 BigInt）
+   * 數值修正：確保大整數可以傳遞給前端
+   * JavaScript 中的 number 精度限制為 2^53-1。超過此值的 BigInt 必須轉為字串。
    */
   _convertValue(value) {
     if (typeof value === 'bigint') {
-      // 安全轉換 BigInt 為 number 或 string
       if (value <= Number.MAX_SAFE_INTEGER && value >= Number.MIN_SAFE_INTEGER) {
-        return Number(value);
+        return Number(value); // 安全範圍內轉回 number
       }
-      return value.toString();
+      return value.toString(); // 超限轉為字串
     }
     return value;
   }
-
 }
 
-// 導出單例
+// 匯出單例：保證整個應用共用同一個 Schema 註冊表
 export const protoEngine = new ProtoEngine();
 export default protoEngine;
 

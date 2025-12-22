@@ -1,4 +1,12 @@
 <script>
+  /**
+   * JSON 樹狀瀏覽組件 (Recursive JSON Tree)
+   * 
+   * 職責：
+   * 1. 以無限遞迴的方式呈現 Protobuf 解碼後的巢狀物件結構。
+   * 2. 針對 Protobuf 特殊類型 (Bytes, BigInt) 進行美化顯示。
+   * 3. 支援節點展開/摺疊，預設只展開前兩層以維護性能。
+   */
   export let data;
   export let label = null;
   export let depth = 0;
@@ -11,7 +19,7 @@
   $: type = getType(data);
 
   /**
-   * 取得資料類型名稱
+   * 偵測資料類型以匹配不同的 CSS 樣式
    */
   function getType(val) {
     if (Array.isArray(val)) return "Array";
@@ -22,19 +30,22 @@
   }
 
   /**
-   * 格式化特殊類型的顯示值
+   * 資料視覺化預處理
+   * 確保 bytes 或超大數值能以人類可讀的格式顯示。
    */
   function formatValue(val) {
     if (val === null) return "null";
     if (val === undefined) return "undefined";
-    if (typeof val === "bigint") return val.toString(); // 移除 'n' 標識
+    if (typeof val === "bigint") return val.toString(); 
     if (val instanceof Uint8Array) {
       if (val.length === 0) return "[]";
+      // 對短 Byte 陣列顯示 16 進位預覽
       if (val.length <= 16) {
         return `[${Array.from(val)
           .map((b) => "0x" + b.toString(16).padStart(2, "0"))
           .join(", ")}]`;
       }
+      // 對長 Byte 陣列僅顯示長度
       return `[${val.length} bytes]`;
     }
     if (typeof val === "string") return `"${val}"`;

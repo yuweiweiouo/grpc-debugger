@@ -1,6 +1,10 @@
 import { derived } from 'svelte/store';
 import { language } from '../stores/settings';
 
+/**
+ * 國際化 (i18n) 模組
+ * 負責管理應用的多語言文字資源與切換邏輯。
+ */
 export const translations = {
   en: {
     network: 'Network',
@@ -40,6 +44,8 @@ export const translations = {
     sync_failed: 'Sync Failed',
     hide_from_log: 'Hide from log',
     show_in_log: 'Show in log',
+    copy_json: 'Copy JSON',
+    copy_hint: 'Press Ctrl+C (or Cmd+C) to copy',
   },
   zh: {
     network: '網路紀錄',
@@ -79,6 +85,8 @@ export const translations = {
     sync_failed: '同步失敗',
     hide_from_log: '從紀錄隱藏',
     show_in_log: '顯示於紀錄',
+    copy_json: '複製 JSON',
+    copy_hint: '按 Ctrl+C (或 Cmd+C) 複製',
   }
 };
 

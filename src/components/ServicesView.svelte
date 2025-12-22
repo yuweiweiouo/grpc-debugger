@@ -1,4 +1,12 @@
 <script>
+  /**
+   * 服務列表首頁 (Services View)
+   * 
+   * 職責：
+   * 1. 顯示目前 Debugger 載入的所有 gRPC 服務。
+   * 2. 支援過濾功能。
+   * 3. 提供顯示切換 (Toggle Visibility) 功能，控制特定服務是否出現在 Network 日誌中。
+   */
   import {
     services,
     clearAllSchemas,

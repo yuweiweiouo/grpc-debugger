@@ -1,6 +1,12 @@
 <script>
+  /**
+   * 設定頁面 (Settings View)
+   * 
+   * 管理應用程序的全域偏好設定，例如語系與佈景主題。
+   */
   import { language } from "../stores/settings";
   import { t } from "../lib/i18n";
+  import { APP_VERSION, APP_NAME } from "../lib/version";
   import { Settings, Globe, Bug } from "lucide-svelte";
 
   function setLanguage(lang) {
@@ -57,7 +63,7 @@
       </button>
     </section>
 
-    <div class="version">gRPC Debugger v1.0.0</div>
+    <div class="version">{APP_NAME} v{APP_VERSION}</div>
   </div>
 </div>
 
