@@ -1,5 +1,5 @@
 <script>
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import Sidebar from './components/Sidebar.svelte';
   import Toolbar from './components/Toolbar.svelte';
   import NetworkList from './components/NetworkList.svelte';
@@ -28,6 +28,17 @@
       } catch (error) {
         console.warn("DevTools API not available:", error);
       }
+    }
+  });
+
+  onDestroy(() => {
+    // 清理 Chrome API listeners，避免 memory leak
+    if (typeof chrome !== "undefined" && chrome.tabs?.onUpdated) {
+      chrome.tabs.onUpdated.removeListener(onTabUpdated);
+    }
+    if (port) {
+      port.onMessage.removeListener(onMessageReceived);
+      port.disconnect();
     }
   });
 
@@ -72,11 +83,30 @@
 
 <style>
   :global(body) {
+    /* 設計系統色彩變數 */
+    --color-primary: #2563eb;
+    --color-primary-dark: #1d4ed8;
+    --color-success: #059669;
+    --color-warning: #ea580c;
+    --color-purple: #8b5cf6;
+    --color-purple-dark: #7c3aed;
+    
+    --color-text-primary: #111827;
+    --color-text-secondary: #6b7280;
+    --color-text-tertiary: #9ca3af;
+    
+    --color-bg-primary: white;
+    --color-bg-secondary: #f9fafb;
+    --color-bg-hover: #f3f4f6;
+    
+    --color-border: #e5e7eb;
+    --color-border-light: #f3f4f6;
+    
     margin: 0;
     font-family: 'Inter', -apple-system, system-ui, sans-serif;
     overflow: hidden;
-    background-color: #f9fafb;
-    color: #111827;
+    background-color: var(--color-bg-secondary);
+    color: var(--color-text-primary);
   }
 
   .app-layout {

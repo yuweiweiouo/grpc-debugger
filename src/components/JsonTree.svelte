@@ -4,9 +4,38 @@
   export let depth = 0;
   export let expanded = depth < 2;
 
-  $: isObject = typeof data === 'object' && data !== null;
+  $: isObject = typeof data === 'object' && data !== null && !(data instanceof Uint8Array);
   $: keys = isObject ? Object.keys(data) : [];
-  $: type = Array.isArray(data) ? 'Array' : (isObject ? 'Object' : typeof data);
+  $: type = getType(data);
+
+  /**
+   * 取得資料類型名稱
+   */
+  function getType(val) {
+    if (Array.isArray(val)) return 'Array';
+    if (val instanceof Uint8Array) return 'Uint8Array';
+    if (typeof val === 'bigint') return 'BigInt';
+    if (typeof val === 'object' && val !== null) return 'Object';
+    return typeof val;
+  }
+
+  /**
+   * 格式化特殊類型的顯示值
+   */
+  function formatValue(val) {
+    if (val === null) return 'null';
+    if (val === undefined) return 'undefined';
+    if (typeof val === 'bigint') return val.toString() + 'n';
+    if (val instanceof Uint8Array) {
+      if (val.length === 0) return '[]';
+      if (val.length <= 16) {
+        return `[${Array.from(val).map(b => '0x' + b.toString(16).padStart(2, '0')).join(', ')}]`;
+      }
+      return `[${val.length} bytes]`;
+    }
+    if (typeof val === 'string') return `"${val}"`;
+    return String(val);
+  }
 
   function toggle() {
     expanded = !expanded;
@@ -40,8 +69,8 @@
   {:else}
     <div class="item leaf">
       {#if label}<span class="key">{label}:</span>{/if}
-      <span class="value" class:string={type === 'string'} class:number={type === 'number'}>
-        {type === 'string' ? `"${data}"` : data}
+      <span class="value" class:string={typeof data === 'string'} class:number={typeof data === 'number'} class:bigint={typeof data === 'bigint'} class:bytes={data instanceof Uint8Array}>
+        {formatValue(data)}
       </span>
     </div>
   {/if}
@@ -100,5 +129,14 @@
 
   .value.number {
     color: #2563eb;
+  }
+
+  .value.bigint {
+    color: #7c3aed;
+  }
+
+  .value.bytes {
+    color: #ea580c;
+    font-size: 12px;
   }
 </style>

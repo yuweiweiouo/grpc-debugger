@@ -1,4 +1,4 @@
-import { writable, derived } from 'svelte/store';
+import { writable, derived, get } from 'svelte/store';
 import { protoEngine } from '../lib/proto-engine';
 import { tryAutoReflection } from './schema';
 
@@ -50,8 +50,7 @@ export async function addLog(entry) {
 }
 
 export async function reprocessAllLogs() {
-  let currentLogs;
-  log.subscribe(l => currentLogs = l)();
+  const currentLogs = get(log);
   
   if (!currentLogs || currentLogs.length === 0) return;
 
@@ -78,11 +77,9 @@ export async function reprocessAllLogs() {
 }
 
 export function clearLogs(force = false) {
-  preserveLog.subscribe(preserve => {
-    if (preserve && !force) return;
-    log.set([]);
-    selectedIdx.set(null);
-  })();
+  if (get(preserveLog) && !force) return;
+  log.set([]);
+  selectedIdx.set(null);
 }
 
 async function processEntry(entry) {
