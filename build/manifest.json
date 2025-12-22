@@ -14,7 +14,6 @@
     "service_worker": "background.js"
   },
   "permissions": [
-    "debugger",
     "storage"
   ],
   "host_permissions": [

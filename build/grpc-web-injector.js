@@ -1,5 +1,5 @@
 /**
- * gRPC Debugger 2.0 - Frontend Injection Script
+ * gRPC Debugger 1.0 - Frontend Injection Script
  * Redesigned for Connect-RPC and Buf ecosystem support.
  */
 

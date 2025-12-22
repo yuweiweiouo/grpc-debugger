@@ -1,27 +1,29 @@
 <script>
-  import { onMount, onDestroy } from 'svelte';
-  import Sidebar from './components/Sidebar.svelte';
-  import Toolbar from './components/Toolbar.svelte';
-  import NetworkList from './components/NetworkList.svelte';
-  import NetworkDetails from './components/NetworkDetails.svelte';
-  import ServicesView from './components/ServicesView.svelte';
-  import SettingsView from './components/SettingsView.svelte';
-  import { addLog, clearLogs } from './stores/network';
-  import { registerSchema } from './stores/schema';
-  import { activePage } from './stores/ui';
-  import { t } from './lib/i18n';
+  import { onMount, onDestroy } from "svelte";
+  import Sidebar from "./components/Sidebar.svelte";
+  import Toolbar from "./components/Toolbar.svelte";
+  import NetworkList from "./components/NetworkList.svelte";
+  import NetworkDetails from "./components/NetworkDetails.svelte";
+  import ServicesView from "./components/ServicesView.svelte";
+  import SettingsView from "./components/SettingsView.svelte";
+  import { addLog, clearLogs } from "./stores/network";
+  import { registerSchema } from "./stores/schema";
+  import { activePage } from "./stores/ui";
+  import { t } from "./lib/i18n";
 
-  let port;
   let tabId;
 
   onMount(() => {
     if (typeof chrome !== "undefined" && chrome.devtools) {
       try {
         tabId = chrome.devtools.inspectedWindow.tabId;
-        port = chrome.runtime.connect(null, { name: "panel" });
-        port.postMessage({ tabId, action: "init" });
-        port.onMessage.addListener(onMessageReceived);
-        
+
+        // 設定全域函式，供 devtools.js 直接呼叫
+        window.dispatchGrpcEvent = (data) => {
+          addLog(data);
+        };
+
+        // 監聽頁面重新載入以清除日誌
         if (chrome.tabs && chrome.tabs.onUpdated) {
           chrome.tabs.onUpdated.addListener(onTabUpdated);
         }
@@ -32,23 +34,14 @@
   });
 
   onDestroy(() => {
-    // 清理 Chrome API listeners，避免 memory leak
+    // 清理全域函式和 listeners
+    if (typeof window !== "undefined") {
+      delete window.dispatchGrpcEvent;
+    }
     if (typeof chrome !== "undefined" && chrome.tabs?.onUpdated) {
       chrome.tabs.onUpdated.removeListener(onTabUpdated);
     }
-    if (port) {
-      port.onMessage.removeListener(onMessageReceived);
-      port.disconnect();
-    }
   });
-
-  function onMessageReceived({ action, data, schema }) {
-    if (action === "gRPCNetworkCall") {
-      addLog(data);
-    } else if (action === "registerSchema" && schema) {
-      registerSchema(schema);
-    }
-  }
 
   function onTabUpdated(tId, { status }) {
     if (tId === tabId && status === "loading") {
@@ -59,9 +52,9 @@
 
 <main class="app-layout">
   <Sidebar />
-  
+
   <div class="main-content">
-    {#if $activePage === 'network'}
+    {#if $activePage === "network"}
       <header>
         <Toolbar />
       </header>
@@ -73,9 +66,9 @@
           <NetworkDetails />
         </div>
       </div>
-    {:else if $activePage === 'services'}
+    {:else if $activePage === "services"}
       <ServicesView />
-    {:else if $activePage === 'settings'}
+    {:else if $activePage === "settings"}
       <SettingsView />
     {/if}
   </div>
@@ -90,20 +83,24 @@
     --color-warning: #ea580c;
     --color-purple: #8b5cf6;
     --color-purple-dark: #7c3aed;
-    
+
     --color-text-primary: #111827;
     --color-text-secondary: #6b7280;
     --color-text-tertiary: #9ca3af;
-    
+
     --color-bg-primary: white;
     --color-bg-secondary: #f9fafb;
     --color-bg-hover: #f3f4f6;
-    
+
     --color-border: #e5e7eb;
     --color-border-light: #f3f4f6;
-    
+
     margin: 0;
-    font-family: 'Inter', -apple-system, system-ui, sans-serif;
+    font-family:
+      "Inter",
+      -apple-system,
+      system-ui,
+      sans-serif;
     overflow: hidden;
     background-color: var(--color-bg-secondary);
     color: var(--color-text-primary);
@@ -145,5 +142,4 @@
     background: white;
     overflow: hidden;
   }
-
 </style>

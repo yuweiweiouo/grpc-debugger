@@ -1,23 +1,40 @@
 <script>
-  import { filteredLog, selectedIdx } from '../stores/network';
-  import { t } from '../lib/i18n';
+  import { afterUpdate } from "svelte";
+  import { filteredLog, selectedIdx } from "../stores/network";
+  import { t } from "../lib/i18n";
+
+  let listContainer;
+  let shouldAutoScroll = true;
 
   function handleSelect(idx) {
     selectedIdx.set(idx);
   }
 
   function handleKeyDown(e, i) {
-    if (e.key === 'Enter' || e.key === ' ') {
+    if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
       handleSelect(i);
     }
   }
+
+  function handleScroll() {
+    if (!listContainer) return;
+    // 檢查是否在底部（允許 5px 誤差）
+    const { scrollTop, scrollHeight, clientHeight } = listContainer;
+    shouldAutoScroll = scrollHeight - scrollTop - clientHeight < 5;
+  }
+
+  afterUpdate(() => {
+    if (shouldAutoScroll && listContainer) {
+      listContainer.scrollTop = listContainer.scrollHeight;
+    }
+  });
 </script>
 
-<div class="network-list">
+<div class="network-list" bind:this={listContainer} on:scroll={handleScroll}>
   {#each $filteredLog as entry, i}
-    <div 
-      class="row" 
+    <div
+      class="row"
       class:selected={$selectedIdx === i}
       on:click={() => handleSelect(i)}
       on:keydown={(e) => handleKeyDown(e, i)}
@@ -25,19 +42,25 @@
       tabindex="0"
     >
       <div class="method-col">
-        <span class="dot" class:success={entry.grpcStatus === 0} class:error={entry.grpcStatus > 0}></span>
-        <span class="method-name">{entry.method.split('/').pop()}</span>
+        <span
+          class="dot"
+          class:success={entry.grpcStatus === 0}
+          class:error={entry.grpcStatus > 0}
+        ></span>
+        <span class="method-name">{entry.method.split("/").pop()}</span>
       </div>
       <div class="meta-col">
-        <span class="status">{entry.grpcStatus ?? '-'}</span>
-        <span class="time">{entry.duration ? `${entry.duration}ms` : '0ms'}</span>
+        <span class="status">{entry.grpcStatus ?? "-"}</span>
+        <span class="time"
+          >{entry.duration ? `${entry.duration}ms` : "0ms"}</span
+        >
       </div>
     </div>
   {/each}
 
   {#if $filteredLog.length === 0}
     <div class="empty">
-      <p>{$t('no_requests')}</p>
+      <p>{$t("no_requests")}</p>
     </div>
   {/if}
 </div>
@@ -46,6 +69,8 @@
   .network-list {
     display: flex;
     flex-direction: column;
+    overflow-y: auto;
+    height: 100%;
   }
 
   .row {
