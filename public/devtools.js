@@ -70,18 +70,41 @@ let panelReady = false;
 // 緩存從 fetch-interceptor 攔截的 request bodies
 const capturedBodies = new Map();
 
+/**
+ * 正規化 URL (Fuzzy Match): 移除 protocol, hostname (可選), query 與 hash
+ * 用於極端情況下的異步通訊匹配
+ */
+function normalizeUrlFuzzy(url) {
+  try {
+    const u = new URL(url);
+    // v2.7: 兩端統一只保留 Pathname。
+    return u.pathname.replace(/\/$/, "");
+  } catch {
+    // 處理相對路徑或格式錯誤
+    if (typeof url === 'string') {
+      const pathOnly = url.split('?')[0].split('#')[0];
+      return pathOnly.replace(/\/$/, "");
+    }
+    return url;
+  }
+}
+
 // 監聽來自 background 的攔截訊息
 chrome.runtime.onMessage.addListener((message) => {
   if (message.type === '__GRPCWEB_DEVTOOLS__' && message.action === 'capturedRequestBody') {
-    // 用 URL 作為 key 存儲 Base64 body
-    capturedBodies.set(message.url, {
+    const fuzzyUrl = normalizeUrlFuzzy(message.url);
+    console.log(`[gRPC Debugger v2.7] Intercepted body for path: ${fuzzyUrl}`);
+    
+    // 用 Fuzzy URL 作為 key 存儲 Base64 body
+    capturedBodies.set(fuzzyUrl, {
       bodyBase64: message.bodyBase64,
       timestamp: Date.now(),
     });
-    // 清理 30 秒前的舊資料
+
+    // 清理 60 秒前的舊資料（加長緩存時間）
     const now = Date.now();
     for (const [key, value] of capturedBodies.entries()) {
-      if (now - value.timestamp > 30000) {
+      if (now - value.timestamp > 60000) {
         capturedBodies.delete(key);
       }
     }
@@ -99,15 +122,28 @@ function processEntry(entry) {
   const responseHeaders = headersToObject(entry.response.headers);
   const grpcStatus = parseGrpcStatus(responseHeaders);
 
-  entry.getContent((body, encoding) => {
-    // 優先使用 fetch-interceptor 攔截的 Base64 body（解決 binary 編碼損壞問題）
-    const captured = capturedBodies.get(entry.request.url);
+  entry.getContent(async (body, encoding) => {
+    const fuzzyUrl = normalizeUrlFuzzy(entry.request.url);
+    
+    // 解決 Race Condition: 增加重試次數與總等待時間（300ms）
+    let captured = capturedBodies.get(fuzzyUrl);
+    if (!captured && entry.request.postData) {
+      console.log(`[gRPC Debugger] Body not found yet for ${fuzzyUrl}, waiting...`);
+      for (let i = 0; i < 6; i++) {
+        await new Promise(resolve => setTimeout(resolve, 50));
+        captured = capturedBodies.get(fuzzyUrl);
+        if (captured) break;
+      }
+    }
+
     const requestRaw = captured?.bodyBase64 || entry.request.postData?.text || null;
     const requestBase64Encoded = !!captured?.bodyBase64;  // 攔截的 body 是 Base64 編碼
     
-    // 使用後從緩存移除
     if (captured) {
-      capturedBodies.delete(entry.request.url);
+      console.log(`[gRPC Debugger] ✅ Successfully used intercepted body for ${fuzzyUrl}`);
+      capturedBodies.delete(fuzzyUrl);
+    } else if (entry.request.postData?.text) {
+      console.warn(`[gRPC Debugger] ❌ Interceptor missed for ${fuzzyUrl}, falling back to HAR text (Binary might be corrupted)`);
     }
     
     const data = {
