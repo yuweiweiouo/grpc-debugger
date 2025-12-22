@@ -179,6 +179,21 @@ class ProtoEngine {
         const message = fromBinary(descMessage, buffer);
         return this._messageToObject(message, descMessage);
       } catch (e) {
+        // 偵測是否為編碼損壞（HAR API 的 postData.text 會損壞 binary）
+        const isEncodingCorruption = e.message.includes('wire type') || 
+                                      e.message.includes('invalid');
+        
+        if (isEncodingCorruption) {
+          // 嘗試提取可讀文字作為 fallback
+          const rawText = this._tryExtractReadableText(buffer);
+          return {
+            _error: 'Binary data corrupted (HAR encoding issue)',
+            _hint: 'Request body contains non-ASCII bytes that were corrupted during capture',
+            _typeName: typeName,
+            _rawText: rawText,
+          };
+        }
+        
         console.error(`[ProtoEngine] Decode failed for ${typeName}: ${e.message}`);
         return { _error: `Decode failed: ${e.message}`, _typeName: typeName };
       }
@@ -189,6 +204,27 @@ class ProtoEngine {
       return { _error: 'No type name provided', _rawLength: buffer.length };
     }
     return { _error: `Schema not found for: ${typeName}`, _rawLength: buffer.length };
+  }
+
+  /**
+   * 嘗試從損壞的 buffer 中提取可讀文字
+   * @param {Uint8Array} buffer
+   * @returns {string | null}
+   */
+  _tryExtractReadableText(buffer) {
+    try {
+      const text = new TextDecoder('utf-8', { fatal: false }).decode(buffer);
+      // 提取看起來像 UUID 或其他有意義的字串
+      const uuids = text.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi);
+      if (uuids && uuids.length > 0) {
+        return `Found ${uuids.length} UUID(s): ${uuids.slice(0, 3).join(', ')}${uuids.length > 3 ? '...' : ''}`;
+      }
+      // 返回可列印字元
+      const printable = text.replace(/[^\x20-\x7E]/g, '').trim();
+      return printable.length > 10 ? printable.slice(0, 100) + '...' : null;
+    } catch {
+      return null;
+    }
   }
 
   /**
