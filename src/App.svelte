@@ -9,6 +9,7 @@
   import { addLog, clearLogs } from "./stores/network";
   import { registerSchema } from "./stores/schema";
   import { activePage } from "./stores/ui";
+  import { listPaneWidth } from "./stores/layout";
   import { t } from "./lib/i18n";
 
   let tabId;
@@ -58,6 +59,34 @@
       clearLogs();
     }
   }
+
+  // --- Resizer Logic ---
+  let isResizing = false;
+
+  function startResizing(e) {
+    isResizing = true;
+    window.addEventListener("mousemove", handleResize);
+    window.addEventListener("mouseup", stopResizing);
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+  }
+
+  function stopResizing() {
+    isResizing = false;
+    window.removeEventListener("mousemove", handleResize);
+    window.removeEventListener("mouseup", stopResizing);
+    document.body.style.cursor = "default";
+    document.body.style.userSelect = "auto";
+  }
+
+  function handleResize(e) {
+    if (!isResizing) return;
+    // 側邊欄寬度 = 滑鼠 X 座標 - Sidebar 寬度 (60px)
+    const newWidth = e.clientX - 60;
+    if (newWidth > 200 && newWidth < 800) {
+      listPaneWidth.set(newWidth);
+    }
+  }
 </script>
 
 <main class="app-layout">
@@ -68,10 +97,15 @@
       <header>
         <Toolbar />
       </header>
-      <div class="split-view">
+      <div class="split-view" style="--list-width: {$listPaneWidth}px">
         <div class="list-pane">
           <NetworkList />
         </div>
+        <div
+          class="resizer"
+          class:active={isResizing}
+          on:mousedown|preventDefault={startResizing}
+        ></div>
         <div class="details-pane">
           <NetworkDetails />
         </div>
@@ -137,18 +171,38 @@
 
   .split-view {
     flex: 1;
-    display: grid;
-    grid-template-columns: 350px 1fr;
+    display: flex;
     overflow: hidden;
+    position: relative;
+  }
+
+  .resizer {
+    width: 4px;
+    height: 100%;
+    cursor: col-resize;
+    background: transparent;
+    transition: background 0.2s;
+    flex: 0 0 4px;
+    z-index: 10;
+    margin: 0 -2px;
+  }
+
+  .resizer:hover,
+  .resizer.active {
+    background: var(--color-purple);
   }
 
   .list-pane {
+    width: var(--list-width);
+    min-width: var(--list-width);
+    max-width: var(--list-width);
     border-right: 1px solid #e5e7eb;
     background: white;
-    overflow-y: auto;
+    overflow: auto;
   }
 
   .details-pane {
+    flex: 1;
     background: white;
     overflow: hidden;
   }

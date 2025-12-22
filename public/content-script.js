@@ -5,7 +5,7 @@
  */
 
 // Inject registration helpers and fetch interceptor
-const VERSION = "v2.7";
+const VERSION = "v2.16";
 console.log(`%c[gRPC Debugger ${VERSION}] Content Script Active`, "background: #3b82f6; color: white; padding: 2px 5px; border-radius: 3px;");
 
 const scripts = ["fetch-interceptor.js", "connect-web-interceptor.js", "grpc-web-injector.js"];

@@ -93,20 +93,52 @@ function normalizeUrlFuzzy(url) {
 chrome.runtime.onMessage.addListener((message) => {
   if (message.type === '__GRPCWEB_DEVTOOLS__' && message.action === 'capturedRequestBody') {
     const fuzzyUrl = normalizeUrlFuzzy(message.url);
-    console.log(`[gRPC Debugger v2.7] Intercepted body for path: ${fuzzyUrl}`);
+    const internalId = 'ghost-' + Math.random().toString(36).substring(2, 9);
     
-    // 用 Fuzzy URL 作為 key 存儲 Base64 body
-    capturedBodies.set(fuzzyUrl, {
+    console.log(`[gRPC Debugger v2.10] 👻 Ghost Intercepted: ${fuzzyUrl} [Allocated UI ID: ${internalId}]`);
+    
+    // v2.10: 使用 FIFO 隊列存儲，解決併發併發
+    if (!capturedBodies.has(fuzzyUrl)) {
+      capturedBodies.set(fuzzyUrl, []);
+    }
+    
+    const interceptData = {
+      id: internalId,
       bodyBase64: message.bodyBase64,
-      timestamp: Date.now(),
-    });
+      timestamp: message.timestamp || Date.now(),
+      url: message.url
+    };
+    
+    capturedBodies.get(fuzzyUrl).push(interceptData);
 
-    // 清理 60 秒前的舊資料（加長緩存時間）
+    // --- Dual-Stream Sync: 立即發送佔位請求到 UI ---
+    const method = extractMethodFromUrl(message.url);
+    const parts = method.split('/');
+    const endpoint = parts.pop() || parts.pop();
+
+    const pendingData = {
+      id: internalId,
+      method,
+      endpoint,
+      methodType: 'unary',
+      url: message.url,
+      startTime: interceptData.timestamp / 1000,
+      status: 'pending',
+      requestRaw: message.bodyBase64,
+      requestBase64Encoded: true,
+      _isPending: true
+    };
+
+    if (panelReady && panelWindow?.dispatchGrpcEvent) {
+      panelWindow.dispatchGrpcEvent(pendingData);
+    } else {
+      pendingEntries.push(pendingData);
+    }
+
+    // 定期清理 (只保留最近 100 個請求或 60 秒內的數據)
     const now = Date.now();
-    for (const [key, value] of capturedBodies.entries()) {
-      if (now - value.timestamp > 60000) {
-        capturedBodies.delete(key);
-      }
+    for (const [path, queue] of capturedBodies.entries()) {
+      capturedBodies.set(path, queue.filter(q => now - q.timestamp < 60000).slice(-100));
     }
   }
 });
@@ -118,45 +150,68 @@ function processEntry(entry) {
   const method = extractMethodFromUrl(entry.request.url);
   const parts = method.split('/');
   const endpoint = parts.pop() || parts.pop();
-  const requestHeaders = headersToObject(entry.request.headers);
   const responseHeaders = headersToObject(entry.response.headers);
   const grpcStatus = parseGrpcStatus(responseHeaders);
 
   entry.getContent(async (body, encoding) => {
     const fuzzyUrl = normalizeUrlFuzzy(entry.request.url);
+    const harStartTime = new Date(entry.startedDateTime).getTime();
     
-    // 解決 Race Condition: 增加重試次數與總等待時間（300ms）
-    let captured = capturedBodies.get(fuzzyUrl);
-    if (!captured && entry.request.postData) {
-      console.log(`[gRPC Debugger] Body not found yet for ${fuzzyUrl}, waiting...`);
-      for (let i = 0; i < 6; i++) {
-        await new Promise(resolve => setTimeout(resolve, 50));
-        captured = capturedBodies.get(fuzzyUrl);
-        if (captured) break;
+    let captured = null;
+    
+    // v2.10 Race Condition Fix: 
+    // 強制等待最多 3 秒，確保攔截器訊息 (A流) 跳過四層 Message Bus 後到達
+    let retryCount = 0;
+    const maxRetries = 30; // 30 * 100ms = 3s
+    
+    while (retryCount < maxRetries) {
+      const queue = capturedBodies.get(fuzzyUrl);
+      if (queue && queue.length > 0) {
+        // 尋找最匹配的幽靈請求 (時間戳相差 2 秒內)
+        let bestMatchIdx = -1;
+        let minDiff = 2000;
+
+        for (let i = 0; i < queue.length; i++) {
+          const diff = Math.abs(queue[i].timestamp - harStartTime);
+          if (diff < minDiff) {
+            minDiff = diff;
+            bestMatchIdx = i;
+          }
+        }
+
+        if (bestMatchIdx !== -1) {
+          captured = queue.splice(bestMatchIdx, 1)[0];
+          break;
+        }
       }
+      
+      // 只有在真的有 postData 的情況下才需要死等攔截器
+      if (!entry.request.postData) break;
+      
+      await new Promise(res => setTimeout(res, 100));
+      retryCount++;
     }
 
     const requestRaw = captured?.bodyBase64 || entry.request.postData?.text || null;
-    const requestBase64Encoded = !!captured?.bodyBase64;  // 攔截的 body 是 Base64 編碼
+    const requestBase64Encoded = !!captured?.bodyBase64;
     
     if (captured) {
-      console.log(`[gRPC Debugger] ✅ Successfully used intercepted body for ${fuzzyUrl}`);
-      capturedBodies.delete(fuzzyUrl);
+      console.log(`[gRPC Debugger v2.10] ✅ Ghost Matched: ${fuzzyUrl} [Match Diff: ${Math.abs(captured.timestamp - harStartTime)}ms]`);
     } else if (entry.request.postData?.text) {
-      console.warn(`[gRPC Debugger] ❌ Interceptor missed for ${fuzzyUrl}, falling back to HAR text (Binary might be corrupted)`);
+      console.warn(`[gRPC Debugger v2.10] ❌ Ghost Missed for ${fuzzyUrl} after 3s. Possible missing interceptor or wrong path.`);
     }
     
     const data = {
-      id: entry.startedDateTime + '_' + entry.request.url,
+      id: captured?.id || (entry.startedDateTime + '_' + entry.request.url),
       method,
       endpoint,
       methodType: 'unary',
       url: entry.request.url,
-      startTime: new Date(entry.startedDateTime).getTime() / 1000,
+      startTime: harStartTime / 1000,
       duration: entry.time,
       size: entry.response.bodySize,
       httpStatus: entry.response.status,
-      requestHeaders,
+      requestHeaders: headersToObject(entry.request.headers),
       responseHeaders,
       grpcStatus: grpcStatus.code,
       grpcMessage: grpcStatus.message,
@@ -164,9 +219,8 @@ function processEntry(entry) {
       requestBase64Encoded,
       responseRaw: body,
       responseBase64Encoded: encoding === 'base64',
-      request: null,
-      response: null,
-      error: null,
+      status: 'finished',
+      _isUpdate: !!captured // 如果有 captured 代表這是在補完之前的 Pending
     };
 
     if (panelReady && panelWindow?.dispatchGrpcEvent) {

@@ -1,7 +1,21 @@
 <script>
-  import { services, clearAllSchemas, reflectionStatus } from '../stores/schema';
-  import { t } from '../lib/i18n';
-  import { Trash2, ShieldCheck, Box, RefreshCw, AlertCircle, CheckCircle2 } from 'lucide-svelte';
+  import {
+    services,
+    clearAllSchemas,
+    reflectionStatus,
+    toggleServiceVisibility,
+  } from "../stores/schema";
+  import { t } from "../lib/i18n";
+  import {
+    Trash2,
+    ShieldCheck,
+    Box,
+    RefreshCw,
+    AlertCircle,
+    CheckCircle2,
+    Eye,
+    EyeOff,
+  } from "lucide-svelte";
 
   function handleClear() {
     if (confirm("Clear all loaded schemas?")) {
@@ -14,28 +28,28 @@
   <header>
     <div class="title">
       <ShieldCheck size={20} />
-      <h2>{$t('loaded_services')}</h2>
-      
-      {#if $reflectionStatus === 'loading'}
+      <h2>{$t("loaded_services")}</h2>
+
+      {#if $reflectionStatus === "loading"}
         <div class="status-badge loading">
           <RefreshCw size={12} class="spin" />
-          <span>{$t('reflecting')}</span>
+          <span>{$t("reflecting")}</span>
         </div>
-      {:else if $reflectionStatus === 'success'}
+      {:else if $reflectionStatus === "success"}
         <div class="status-badge success">
           <CheckCircle2 size={12} />
-          <span>{$t('sync_ok')}</span>
+          <span>{$t("sync_ok")}</span>
         </div>
-      {:else if $reflectionStatus === 'failed'}
+      {:else if $reflectionStatus === "failed"}
         <div class="status-badge error">
           <AlertCircle size={12} />
-          <span>{$t('sync_failed')}</span>
+          <span>{$t("sync_failed")}</span>
         </div>
       {/if}
     </div>
     <button class="clear-btn" on:click={handleClear}>
       <Trash2 size={16} />
-      <span>{$t('clear_all')}</span>
+      <span>{$t("clear_all")}</span>
     </button>
   </header>
 
@@ -43,10 +57,26 @@
     {#each $services as service}
       <div class="service-card">
         <div class="card-header">
-          <Box size={16} color="#8b5cf6" />
-          <span class="pkg">{service.fullName.split('.').slice(0, -1).join('.')}</span>
+          <div class="header-left">
+            <Box size={16} color={service.hidden ? "#9ca3af" : "#8b5cf6"} />
+            <span class="pkg"
+              >{service.fullName.split(".").slice(0, -1).join(".")}</span
+            >
+          </div>
+          <button
+            class="visibility-toggle"
+            class:hidden={service.hidden}
+            on:click={() => toggleServiceVisibility(service.fullName)}
+            title={service.hidden ? $t("show_in_log") : $t("hide_from_log")}
+          >
+            {#if service.hidden}
+              <EyeOff size={14} />
+            {:else}
+              <Eye size={14} />
+            {/if}
+          </button>
         </div>
-        <h3>{service.name}</h3>
+        <h3 class:muted={service.hidden}>{service.name}</h3>
         <div class="methods">
           {#each service.methods as method}
             <div class="method-chip">{method.name}</div>
@@ -57,8 +87,8 @@
 
     {#if $services.length === 0}
       <div class="empty-state">
-        <p>{$t('no_schemas_yet')}</p>
-        <span class="hint">{$t('hint_register')}</span>
+        <p>{$t("no_schemas_yet")}</p>
+        <span class="hint">{$t("hint_register")}</span>
       </div>
     {/if}
   </div>
@@ -118,8 +148,12 @@
   }
 
   @keyframes spin {
-    from { transform: rotate(0deg); }
-    to { transform: rotate(360deg); }
+    from {
+      transform: rotate(0deg);
+    }
+    to {
+      transform: rotate(360deg);
+    }
   }
 
   :global(.spin) {
@@ -157,14 +191,21 @@
     border: 1px solid #e5e7eb;
     border-radius: 12px;
     padding: 20px;
-    box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
   }
 
   .card-header {
     display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+  }
+
+  .header-left {
+    display: flex;
     align-items: center;
     gap: 8px;
-    margin-bottom: 8px;
+    min-width: 0;
   }
 
   .pkg {
@@ -180,6 +221,40 @@
     margin: 0 0 16px 0;
     font-size: 16px;
     color: #111827;
+    transition: color 0.2s;
+  }
+
+  h3.muted {
+    color: #9ca3af;
+  }
+
+  .visibility-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    background: transparent;
+    border: none;
+    border-radius: 4px;
+    color: #9ca3af;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .visibility-toggle:hover {
+    background: #f3f4f6;
+    color: #8b5cf6;
+  }
+
+  .visibility-toggle.hidden {
+    color: #ef4444;
+  }
+
+  .visibility-toggle.hidden:hover {
+    background: #fef2f2;
+    color: #dc2626;
   }
 
   .methods {

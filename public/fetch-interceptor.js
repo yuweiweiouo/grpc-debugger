@@ -3,7 +3,7 @@
  * 攔截 fetch 與 XHR 請求，包含版本化日誌與同步 XHR 支援
  */
 (function() {
-  const VERSION = "v2.7";
+  const VERSION = "v2.16";
   const GRPC_CONTENT_TYPES = ['grpc', 'connect'];
   
   /**
@@ -63,8 +63,16 @@
     if (!body) return null;
     if (body instanceof ArrayBuffer) return body;
     if (body instanceof Uint8Array) return body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength);
+    if (body instanceof Blob) return null; // Blob 必須異步處理，對 XHR 較不友善
     if (typeof body === 'string') return new TextEncoder().encode(body).buffer;
     return null;
+  }
+
+  /**
+   * 生成唯一請求 ID 用於跨流追蹤 (Dual-Stream Sync)
+   */
+  function generateRequestId() {
+    return 'req-' + Math.random().toString(36).substring(2, 11) + '-' + Date.now();
   }
 
   // --- Fetch 攔截 ---
@@ -87,7 +95,6 @@
 
     if (isGrpcRequest(contentType) && options.body) {
       try {
-        // fetch body 異步提取（fetch 本身就是異步的，沒關係）
         let bodyBuffer = null;
         if (options.body instanceof Blob) {
           bodyBuffer = await options.body.arrayBuffer();
@@ -96,14 +103,16 @@
         }
 
         if (bodyBuffer && bodyBuffer.byteLength > 0) {
+          // v2.9 Ghost Sync: 直接發送數據，不注入 Header
           window.postMessage({
             type: '__GRPCWEB_DEVTOOLS__',
             action: 'capturedRequestBody',
             url: fuzzyUrl,
             bodyBase64: arrayBufferToBase64(bodyBuffer),
+            timestamp: Date.now(),
             _v: VERSION
           }, '*');
-          console.log(`%c[gRPC Debugger ${VERSION}] ✅ Captured Fetch: ${fuzzyUrl}`, "color: #10b981; font-weight: bold;");
+          console.log(`%c[gRPC Debugger ${VERSION}] 👻 Ghost Intercepted (Fetch): ${fuzzyUrl}`, "color: #d946ef; font-weight: bold;");
         }
       } catch (e) {}
     }
@@ -132,14 +141,16 @@
       try {
         const bodyBuffer = extractBodySync(body);
         if (bodyBuffer && bodyBuffer.byteLength > 0) {
+          // v2.9 Ghost Sync: 不注入 Header
           window.postMessage({
             type: '__GRPCWEB_DEVTOOLS__',
             action: 'capturedRequestBody',
             url: this._url,
             bodyBase64: arrayBufferToBase64(bodyBuffer),
+            timestamp: Date.now(),
             _v: VERSION
           }, '*');
-          console.log(`%c[gRPC Debugger ${VERSION}] ✅ Captured XHR: ${this._url}`, "color: #2563eb; font-weight: bold;");
+          console.log(`%c[gRPC Debugger ${VERSION}] 👻 Ghost Intercepted (XHR): ${this._url}`, "color: #d946ef; font-weight: bold;");
         }
       } catch (e) {}
     }
