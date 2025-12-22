@@ -269,35 +269,19 @@ class ReflectionClient {
    * @returns {number}
    */
   _fieldKindToType(f) {
-    // 根據 google.protobuf.FieldDescriptorProto.Type
-    const kindMap = {
-      'double': 1,
-      'float': 2,
-      'int64': 3,
-      'uint64': 4,
-      'int32': 5,
-      'fixed64': 6,
-      'fixed32': 7,
-      'bool': 8,
-      'string': 9,
-      'bytes': 12,
-      'uint32': 13,
-      'sfixed32': 15,
-      'sfixed64': 16,
-      'sint32': 17,
-      'sint64': 18,
-      'message': 11,
-      'enum': 14,
-      'group': 10,
-    };
-    
-    if (f.kind === 'message') return 11;
-    if (f.kind === 'enum') return 14;
-    if (f.kind === 'map') return 11; // map 在 wire 上是 message
-    if (f.kind === 'scalar') {
-      return kindMap[f.scalar] || 0;
+    // 優先從原始 proto 定義取得類型 (FieldDescriptorSet)
+    // 這是最底層的真實數據，不會因為庫的封裝而讀不到
+    if (f.proto && typeof f.proto.type === 'number') {
+      return f.proto.type;
     }
-    return 0;
+
+    // Fallback: 根據 kind 判定
+    if (f.kind === 'message' || f.kind === 'map') return 11;
+    if (f.kind === 'enum') return 14;
+    if (f.kind === 'scalar') {
+      return f.scalar || 9; // 最終預設 string(9)
+    }
+    return 9;
   }
 
   /**

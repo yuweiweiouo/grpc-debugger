@@ -1,14 +1,13 @@
 /**
  * gRPC Debugger 1.0 - Frontend Injection Script
  * Redesigned for Connect-RPC and Buf ecosystem support.
+ * Now with auto-detection for google-protobuf and protobufjs.
  */
 
 (function() {
+  const VERSION = "v2.7";
   const postType = "__GRPCWEB_DEVTOOLS__";
-
-  window.__GRPCWEB_DEVTOOLS__ = function() {
-    console.log("[gRPC Debugger] API initialized.");
-  };
+  console.log(`%c[gRPC Debugger ${VERSION}] Injector Active`, "color: #8b5cf6; font-weight: bold;");
 
   /**
    * New 2.0 API: Register a Connect/Buf Service definition
@@ -37,14 +36,23 @@
        if (!msg || !msg.typeName || messages[msg.typeName]) return;
        messages[msg.typeName] = {
          name: msg.typeName.split('.').pop(),
-         fields: msg.fields.map(f => ({
-           number: f.no,
-           name: f.name,
-           type: f.kind === 'message' ? 11 : 0, // Simplified for now
-           type_name: f.T ? f.T.typeName : undefined
-         }))
+         fields: msg.fields.map(f => {
+           let fieldType = 9; // 預設 string 而非 0
+           if (f.kind === 'message' || f.kind === 'map') {
+             fieldType = 11;
+           } else if (f.kind === 'scalar') {
+             fieldType = f.scalar || 9;
+           } else if (f.kind === 'enum') {
+             fieldType = 14;
+           }
+           return {
+             number: f.no,
+             name: f.name,
+             type: fieldType,
+             type_name: f.T ? f.T.typeName : (f.K ? `Map<${f.K.name}, ${f.V.name}>` : undefined)
+           };
+         })
        };
-       // Recursively collect nested messages
        msg.fields.forEach(f => f.T && collectMessages(f.T));
     };
 
@@ -74,12 +82,22 @@
       if (!msg || !msg.typeName || messages[msg.typeName]) return;
       messages[msg.typeName] = {
         name: msg.typeName.split('.').pop(),
-        fields: msg.fields.map(f => ({
-          number: f.no,
-          name: f.name,
-          type: f.kind === 'message' ? 11 : (f.kind === 'scalar' ? f.scalar : 0),
-          type_name: f.T ? f.T.typeName : undefined
-        }))
+        fields: msg.fields.map(f => {
+          let fieldType = 9; // 預設 string
+          if (f.kind === 'message' || f.kind === 'map') {
+            fieldType = 11;
+          } else if (f.kind === 'scalar') {
+            fieldType = f.scalar || 9;
+          } else if (f.kind === 'enum') {
+            fieldType = 14;
+          }
+          return {
+            number: f.no,
+            name: f.name,
+            type: fieldType,
+            type_name: f.T ? f.T.typeName : undefined
+          };
+        })
       };
       msg.fields.forEach(f => f.T && collect(f.T));
     };
@@ -105,5 +123,162 @@
   };
   // -----------------------------
 
+  // ============================================================================
+  // Auto-Detection: google-protobuf (window.proto) and protobufjs (window.protobuf)
+  // ============================================================================
+
+  /**
+   * 從 google-protobuf 的 proto namespace 提取 schema
+   * 結構：proto.package.name.MessageName
+   */
+  function extractFromGoogleProtobuf(protoObj, path = '') {
+    const messages = {};
+    const services = [];
+
+    for (const key of Object.keys(protoObj)) {
+      const value = protoObj[key];
+      if (!value) continue;
+
+      const fullName = path ? `${path}.${key}` : key;
+
+      if (typeof value === 'function') {
+        // 檢查是否為 Message（有 serializeBinary 方法）
+        if (typeof value.serializeBinary === 'function' || 
+            typeof value.prototype?.serializeBinary === 'function') {
+          
+          const fields = [];
+          try {
+            // 試著從實例取得欄位資訊
+            const instance = new value();
+            if (instance.toObject) {
+              const obj = instance.toObject();
+              let fieldNum = 1;
+              for (const fieldName of Object.keys(obj)) {
+                let guessedType = 9; // 預設 string
+                const val = obj[fieldName];
+                
+                if (Array.isArray(val)) {
+                  // 如果陣列裡面有物件或者是空陣列，暫且當作 message (11)
+                  // 如果陣列裡面是 primitives，則是 repeated scalar
+                  if (val.length > 0 && typeof val[0] !== 'object') {
+                    if (typeof val[0] === 'number') guessedType = 13;
+                    else if (typeof val[0] === 'boolean') guessedType = 8;
+                    else guessedType = 9;
+                  } else {
+                    guessedType = 11;
+                  }
+                } else if (typeof val === 'object' && val !== null) {
+                  guessedType = 11;
+                } else if (typeof val === 'boolean') {
+                  guessedType = 8;
+                } else if (typeof val === 'number') {
+                  guessedType = 13;
+                }
+
+                fields.push({
+                  number: fieldNum++,
+                  name: fieldName,
+                  type: guessedType,
+                  type_name: ''
+                });
+              }
+            }
+          } catch {}
+
+          messages[fullName] = {
+            name: key,
+            fullName,
+            fields,
+            _source: 'google-protobuf'
+          };
+        } 
+        // 檢查是否為 Service Client (通常會有某個 Client 尾碼或特定的原型方法)
+        else if (key.endsWith('Client') || value.name?.endsWith('Client')) {
+          const serviceMethods = [];
+          for (const methodKey of Object.keys(value.prototype || {})) {
+            // gRPC-Web 生成的方法通常沒有大寫開頭，且不是內建方法
+            if (typeof value.prototype[methodKey] === 'function' && 
+                !['constructor', 'serializeBinary', 'toObject'].includes(methodKey)) {
+              serviceMethods.push({
+                name: methodKey,
+                requestType: '', // 無法直接從 function 取得類型名稱
+                responseType: '',
+              });
+            }
+          }
+          if (serviceMethods.length > 0) {
+            services.push({
+              name: key.replace('Client', ''),
+              fullName,
+              methods: serviceMethods
+            });
+          }
+        }
+      }
+
+      // 檢查是否為嵌套 namespace
+      if (typeof value === 'object' && !Array.isArray(value) && value !== null) {
+        const nested = extractFromGoogleProtobuf(value, fullName);
+        Object.assign(messages, nested.messages);
+        services.push(...nested.services);
+      }
+    }
+
+    return { messages, services };
+  }
+
+
+  /**
+   * 自動偵測並註冊本地 proto library
+   */
+  function autoDetectLocalProtos() {
+    let found = false;
+
+    // 1. 檢查 google-protobuf 的 window.proto
+    if (window.proto && typeof window.proto === 'object') {
+      console.log('[gRPC Debugger] Detected google-protobuf (window.proto)');
+      try {
+        const result = extractFromGoogleProtobuf(window.proto);
+        const messageCount = Object.keys(result.messages).length;
+        
+        if (messageCount > 0) {
+          window.postMessage({
+            type: postType,
+            action: "registerSchema",
+            schema: result,
+            source: "auto-detect:google-protobuf"
+          }, "*");
+          console.log(`[gRPC Debugger] Auto-registered ${messageCount} messages from window.proto`);
+          found = true;
+        }
+      } catch (e) {
+        console.warn('[gRPC Debugger] Failed to extract from window.proto:', e);
+      }
+    }
+
+    // 2. 檢查 protobufjs 的 window.protobuf
+    if (window.protobuf?.Root) {
+      console.log('[gRPC Debugger] Detected protobuf.js (window.protobuf)');
+      // protobufjs 需要不同的處理方式，這裡先標記偵測到
+      // 實際提取需要遍歷 Root
+      found = true;
+    }
+
+    // 通知 extension 是否找到本地 proto
+    window.postMessage({
+      type: postType,
+      action: "localProtoDetected",
+      found
+    }, "*");
+  }
+
+  // 延遲執行自動偵測，等待頁面載入完成
+  if (document.readyState === 'complete') {
+    setTimeout(autoDetectLocalProtos, 500);
+  } else {
+    window.addEventListener('load', () => setTimeout(autoDetectLocalProtos, 500));
+  }
+
   window.dispatchEvent(new CustomEvent("grpc-web-dev-tools-ready"));
 })();
+

@@ -11,6 +11,9 @@ const reflectedServers = new Set();
 // 進行中的 reflection Promises（用於等待）
 const reflectionPromises = new Map();
 
+// 是否已從本地 proto library 註冊 schema（優先於 reflection）
+let localProtoRegistered = false;
+
 /**
  * 等待指定 origin 的 reflection 完成（如果有的話）
  * @param {string} origin
@@ -25,10 +28,12 @@ export async function waitForReflection(origin) {
 
 /**
  * 嘗試對指定 URL 進行 auto-reflection
- * 會自動處理：
- * 1. 已完成的 reflection（直接返回）
- * 2. 進行中的 reflection（等待完成）
- * 3. 尚未開始的 reflection（開始並等待）
+ * 優先檢查：
+ * 1. 本地 proto library 已註冊 → 跳過 reflection
+ * 2. protoEngine 已有對應的 method → 跳過 reflection
+ * 3. 已完成的 reflection（直接返回）
+ * 4. 進行中的 reflection（等待完成）
+ * 5. 尚未開始的 reflection（開始並等待）
  * 
  * @param {string} url
  * @returns {Promise<boolean>} 是否成功載入新 schema
@@ -38,6 +43,16 @@ export async function tryAutoReflection(url) {
   
   try {
     const origin = new URL(url).origin;
+    
+    // 如果本地 proto 已註冊且有對應的 schema，跳過 reflection
+    if (localProtoRegistered && protoEngine.serviceMap.size > 0) {
+      // 檢查這個 URL 對應的 method 是否已在 serviceMap 中
+      const methodPath = new URL(url).pathname;
+      if (protoEngine.findMethod(methodPath)) {
+        console.log(`[Schema] Skipping reflection - local proto available for ${methodPath}`);
+        return false;
+      }
+    }
     
     // 已完成，直接返回
     if (reflectedServers.has(origin)) {
@@ -119,8 +134,19 @@ export function hasReflected(url) {
   }
 }
 
-export function registerSchema(data) {
+/**
+ * 註冊 schema
+ * @param {object} data - Schema data
+ * @param {string} [source] - 來源標識 ('auto-detect:google-protobuf', 'reflection', etc.)
+ */
+export function registerSchema(data, source = '') {
   protoEngine.registerSchema(data);
+
+  // 標記是否從本地 proto library 註冊
+  if (source?.startsWith('auto-detect')) {
+    localProtoRegistered = true;
+    console.log(`[Schema] Local proto registered from: ${source}`);
+  }
 
   if (data.services) {
     services.update(list => {

@@ -40,24 +40,28 @@ setInterval(() => {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const tabId = sender.tab?.id;
   
+  // 避免自循環
+  if (message._relayedBy === 'background') return;
+
   // 處理 fetch-interceptor 攔截的 request body
   if (message.type === '__GRPCWEB_DEVTOOLS__' && message.action === 'capturedRequestBody') {
-    const key = `${tabId}_${message.url}`;
-    capturedBodies.set(key, {
-      bodyBase64: message.bodyBase64,
-      timestamp: Date.now(),
-    });
-    // 同時發送給 panel
-    if (tabId && connections[tabId]?.panel) {
-      connections[tabId].panel.postMessage(message);
+    if (tabId) {
+      const key = `${tabId}_${message.url}`;
+      capturedBodies.set(key, {
+        bodyBase64: message.bodyBase64,
+        timestamp: Date.now(),
+      });
     }
+
+    // 廣播給 extension 其他部分（panel, devtools.js）
+    message._relayedBy = 'background';
+    chrome.runtime.sendMessage(message);
     return;
   }
   
-  if (!tabId || !connections[tabId]?.panel) return;
-
-  // Relay registration messages to the panel
-  connections[tabId].panel.postMessage(message);
+  // Relay other messages (like registerSchema)
+  message._relayedBy = 'background';
+  chrome.runtime.sendMessage(message);
 });
 
 chrome.runtime.onConnect.addListener((port) => {

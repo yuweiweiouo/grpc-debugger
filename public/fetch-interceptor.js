@@ -1,21 +1,39 @@
 /**
- * gRPC Debugger - Fetch Interceptor
- * 攔截 fetch 請求，捕獲 binary request body 並轉為 Base64
- * 解決 HAR API 無法正確處理 binary postData 的問題
+ * gRPC Debugger - Robust Interceptor v2.3 (Ironclad)
+ * 攔截 fetch 與 XHR 請求，包含版本化日誌與同步 XHR 支援
  */
 (function() {
+  const VERSION = "v2.7";
   const GRPC_CONTENT_TYPES = ['grpc', 'connect'];
   
-  // 保存原始 fetch
-  const originalFetch = window.fetch;
-  
   /**
-   * 將 ArrayBuffer/Uint8Array 轉為 Base64
+   * 正規化 URL (Fuzzy Match): 移除 protocol, query 與 hash
+   */
+  function normalizeUrlFuzzy(url) {
+    try {
+      // v2.7: 只保留 Pathname。
+      // 這是為了避免 hostname/port 在不同環境（localhost/dev）
+      // 以及不同獲取來源（Fetch/XHR vs HAR）之間的格式差異。
+      const u = new URL(url, window.location.href);
+      return u.pathname.replace(/\/$/, "");
+    } catch {
+      // 如果不是絕對路徑，嘗試處理相對路徑
+      if (typeof url === 'string') {
+        const pathOnly = url.split('?')[0].split('#')[0];
+        return pathOnly.replace(/\/$/, "");
+      }
+      return url;
+    }
+  }
+
+  /**
+   * 高效將 ArrayBuffer/Uint8Array 轉為 Base64
    */
   function arrayBufferToBase64(buffer) {
     const bytes = new Uint8Array(buffer);
     let binary = '';
-    for (let i = 0; i < bytes.byteLength; i++) {
+    const len = bytes.byteLength;
+    for (let i = 0; i < len; i++) {
       binary += String.fromCharCode(bytes[i]);
     }
     return btoa(binary);
@@ -24,69 +42,109 @@
   /**
    * 檢查是否為 gRPC 相關請求
    */
-  function isGrpcRequest(url, options) {
-    const contentType = options?.headers?.get?.('content-type') || 
-                        options?.headers?.['content-type'] || 
-                        options?.headers?.['Content-Type'] || '';
-    return GRPC_CONTENT_TYPES.some(t => contentType.toLowerCase().includes(t));
+  function isGrpcRequest(contentType) {
+    if (!contentType) return false;
+    const ct = contentType.toLowerCase();
+    // v2.7: 擴大判定範圍，捕捉更多潛在的 gRPC-Web / Connect 流量
+    return (
+      ct.includes('grpc') || 
+      ct.includes('connect') || 
+      ct.includes('proto') || 
+      ct.includes('json') ||
+      ct.includes('stream') ||
+      ct.includes('message/reader')
+    );
   }
   
   /**
-   * 提取 request body 為 ArrayBuffer
+   * 提取 request body 為 ArrayBuffer (同步版本)
    */
-  async function extractBody(body) {
+  function extractBodySync(body) {
     if (!body) return null;
-    
-    if (body instanceof ArrayBuffer) {
-      return body;
-    }
-    if (body instanceof Uint8Array) {
-      return body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength);
-    }
-    if (body instanceof Blob) {
-      return await body.arrayBuffer();
-    }
-    if (typeof body === 'string') {
-      return new TextEncoder().encode(body).buffer;
-    }
-    // ReadableStream 或其他類型，無法直接讀取
+    if (body instanceof ArrayBuffer) return body;
+    if (body instanceof Uint8Array) return body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength);
+    if (typeof body === 'string') return new TextEncoder().encode(body).buffer;
     return null;
   }
-  
-  /**
-   * 攔截後的 fetch
-   */
+
+  // --- Fetch 攔截 ---
+  const originalFetch = window.fetch;
   window.fetch = async function(input, init) {
-    const url = typeof input === 'string' ? input : input.url;
-    const options = init || (typeof input === 'object' ? input : {});
+    const rawUrl = typeof input === "string" ? input : input.url;
+    const fuzzyUrl = normalizeUrlFuzzy(rawUrl);
+    const options = init || (typeof input === "object" ? input : {});
     
-    // 只攔截 gRPC 請求
-    if (isGrpcRequest(url, options) && options.body) {
+    let contentType = "";
+    try {
+      if (options.headers) {
+        if (typeof options.headers.get === "function") {
+          contentType = options.headers.get("content-type") || options.headers.get("Content-Type") || "";
+        } else {
+          contentType = options.headers["content-type"] || options.headers["Content-Type"] || "";
+        }
+      }
+    } catch (e) {}
+
+    if (isGrpcRequest(contentType) && options.body) {
       try {
-        const bodyBuffer = await extractBody(options.body);
-        
+        // fetch body 異步提取（fetch 本身就是異步的，沒關係）
+        let bodyBuffer = null;
+        if (options.body instanceof Blob) {
+          bodyBuffer = await options.body.arrayBuffer();
+        } else {
+          bodyBuffer = extractBodySync(options.body);
+        }
+
         if (bodyBuffer && bodyBuffer.byteLength > 0) {
-          const base64Body = arrayBufferToBase64(bodyBuffer);
-          const requestId = `${Date.now()}_${url}`;
-          
-          // 發送 request body 到 extension
           window.postMessage({
             type: '__GRPCWEB_DEVTOOLS__',
             action: 'capturedRequestBody',
-            requestId,
-            url,
-            bodyBase64: base64Body,
-            bodyLength: bodyBuffer.byteLength,
+            url: fuzzyUrl,
+            bodyBase64: arrayBufferToBase64(bodyBuffer),
+            _v: VERSION
           }, '*');
+          console.log(`%c[gRPC Debugger ${VERSION}] ✅ Captured Fetch: ${fuzzyUrl}`, "color: #10b981; font-weight: bold;");
         }
-      } catch (e) {
-        console.debug('[gRPC Debugger] Failed to capture request body:', e);
-      }
+      } catch (e) {}
     }
-    
-    // 調用原始 fetch
     return originalFetch.apply(this, arguments);
   };
 
-  console.log('[gRPC Debugger] Fetch interceptor installed');
+  // --- XHR 攔截 ---
+  const XHR = window.XMLHttpRequest;
+  const originalOpen = XHR.prototype.open;
+  const originalSend = XHR.prototype.send;
+  const originalSetHeader = XHR.prototype.setRequestHeader;
+
+  XHR.prototype.open = function(method, url) {
+    this._url = normalizeUrlFuzzy(url);
+    this._headers = {};
+    return originalOpen.apply(this, arguments);
+  };
+
+  XHR.prototype.setRequestHeader = function(header, value) {
+    this._headers[header.toLowerCase()] = value;
+    return originalSetHeader.apply(this, arguments);
+  };
+
+  XHR.prototype.send = function(body) {
+    if (isGrpcRequest(this._headers['content-type']) && body) {
+      try {
+        const bodyBuffer = extractBodySync(body);
+        if (bodyBuffer && bodyBuffer.byteLength > 0) {
+          window.postMessage({
+            type: '__GRPCWEB_DEVTOOLS__',
+            action: 'capturedRequestBody',
+            url: this._url,
+            bodyBase64: arrayBufferToBase64(bodyBuffer),
+            _v: VERSION
+          }, '*');
+          console.log(`%c[gRPC Debugger ${VERSION}] ✅ Captured XHR: ${this._url}`, "color: #2563eb; font-weight: bold;");
+        }
+      } catch (e) {}
+    }
+    return originalSend.apply(this, arguments);
+  };
+
+  console.log(`%c[gRPC Debugger ${VERSION}] Ironclad Interceptor Installed (Fetch/XHR)`, "color: #3b82f6; font-weight: bold; padding: 4px; border: 1px solid #3b82f6; border-radius: 4px;");
 })();

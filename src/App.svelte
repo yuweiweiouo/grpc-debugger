@@ -23,6 +23,16 @@
           addLog(data);
         };
 
+        // 監聯來自 content-script/background 的 schema 註冊訊息
+        chrome.runtime.onMessage.addListener((message) => {
+          if (
+            message.type === "__GRPCWEB_DEVTOOLS__" &&
+            message.action === "registerSchema"
+          ) {
+            registerSchema(message.schema, message.source || "");
+          }
+        });
+
         // 監聽頁面重新載入以清除日誌
         if (chrome.tabs && chrome.tabs.onUpdated) {
           chrome.tabs.onUpdated.addListener(onTabUpdated);

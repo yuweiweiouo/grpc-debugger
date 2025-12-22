@@ -1,7 +1,7 @@
 <script>
-  import { activePage, navigate } from '../stores/ui';
-  import { t } from '../lib/i18n';
-  import { Activity, ShieldCheck, Settings, Box } from 'lucide-svelte';
+  import { activePage, navigate } from "../stores/ui";
+  import { t } from "../lib/i18n";
+  import { Activity, ShieldCheck, Settings, Box } from "lucide-svelte";
 </script>
 
 <nav class="sidebar">
@@ -10,31 +10,32 @@
   </div>
 
   <div class="nav-items">
-    <button 
-      class:active={$activePage === 'network'} 
-      on:click={() => navigate('network')}
-      title={$t('network')}
+    <button
+      class:active={$activePage === "network"}
+      on:click={() => navigate("network")}
+      title={$t("network")}
     >
       <Activity size={20} />
     </button>
-    
-    <button 
-      class:active={$activePage === 'services'} 
-      on:click={() => navigate('services')}
-      title={$t('services')}
+
+    <button
+      class:active={$activePage === "services"}
+      on:click={() => navigate("services")}
+      title={$t("services")}
     >
       <ShieldCheck size={20} />
     </button>
   </div>
 
   <div class="bottom">
-    <button 
-      class:active={$activePage === 'settings'} 
-      on:click={() => navigate('settings')}
-      title={$t('settings')}
+    <button
+      class:active={$activePage === "settings"}
+      on:click={() => navigate("settings")}
+      title={$t("settings")}
     >
       <Settings size={20} />
     </button>
+    <div class="version">v2.7</div>
   </div>
 </nav>
 
@@ -46,19 +47,28 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    padding: 16px 0;
-    gap: 32px;
+    padding: 8px 0;
+    gap: 12px;
   }
 
   .logo {
-    margin-bottom: 8px;
+    margin-bottom: 4px;
   }
 
   .nav-items {
     flex: 1;
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: 12px;
+  }
+
+  .version {
+    font-size: 9px;
+    font-weight: bold;
+    color: #9ca3af;
+    margin-top: 2px;
+    text-align: center;
+    opacity: 0.5;
   }
 
   button {
