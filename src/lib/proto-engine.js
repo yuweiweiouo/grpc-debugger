@@ -9,7 +9,9 @@
 
 import { 
   createFileRegistry, 
-  fromBinary 
+  fromBinary,
+  toBinary,
+  create
 } from '@bufbuild/protobuf';
 import { 
   FileDescriptorSetSchema 
@@ -87,6 +89,11 @@ class ProtoEngine {
    * @param {object} data 包含 services 與 messages 的結構化物件
    */
   registerSchema(data) {
+    // 關鍵：如果有 registry 則直接儲存，這是從 Reflection 來的官方註冊表
+    if (data.registry) {
+      this.registry = data.registry;
+    }
+
     // 處理訊息定義
     if (data.messages) {
       for (const [fullName, def] of Object.entries(data.messages)) {
@@ -110,7 +117,7 @@ class ProtoEngine {
         }
       }
     }
-    console.log(`[ProtoEngine] 舊版 Schema 註冊完成，共計 ${this.schemas.size} 訊息，${this.serviceMap.size} 方法`);
+    console.log(`[ProtoEngine] Schema 註冊完成，共計 ${this.schemas.size} 訊息，${this.serviceMap.size} 方法，Registry: ${!!this.registry}`);
   }
 
   /**
@@ -171,6 +178,57 @@ class ProtoEngine {
     }
     
     return null;
+  }
+
+  /**
+   * 編碼 JSON 物件為 Protobuf 二進位格式
+   * 用於 Playground 發送 RPC 請求
+   * 
+   * @param {string} typeName 訊息類型名稱
+   * @param {object} jsonData JSON 格式的請求資料
+   * @returns {Uint8Array | null} 編碼後的二進位資料
+   */
+  encodeMessage(typeName, jsonData) {
+    if (!typeName || !jsonData) return null;
+
+    const schema = this.findMessage(typeName);
+    // 優先使用 registry 中的描述符，否則使用 _desc 屬性（從 Reflection 轉換後的 legacy 物件）
+    const descMessage = schema?.kind === 'message' ? schema : schema?._desc;
+
+    if (!descMessage) {
+      const availableKeys = Array.from(this.schemas.keys()).slice(0, 20);
+      console.error(`[ProtoEngine] 找不到編碼用的 Schema: ${typeName}`);
+      console.error(`[ProtoEngine] 可用的 Schemas (前20個): ${availableKeys.join(', ')}`);
+      console.error(`[ProtoEngine] Registry 存在: ${!!this.registry}`);
+      return null;
+    }
+
+    try {
+      const message = create(descMessage, this._jsonToProto(jsonData, descMessage));
+      return toBinary(descMessage, message);
+    } catch (e) {
+      console.error(`[ProtoEngine] 編碼失敗:`, e);
+      return null;
+    }
+  }
+
+  /**
+   * 將 JSON 物件轉換為 Protobuf 相容格式
+   * 處理 BigInt 字串等特殊情況
+   */
+  _jsonToProto(json, desc) {
+    if (json === null || json === undefined) return json;
+    if (typeof json !== 'object') return json;
+    if (Array.isArray(json)) {
+      return json.map(item => this._jsonToProto(item, desc));
+    }
+
+    const result = {};
+    for (const [key, value] of Object.entries(json)) {
+      if (key === '$typeName') continue;
+      result[key] = this._jsonToProto(value, desc);
+    }
+    return result;
   }
 
   /**

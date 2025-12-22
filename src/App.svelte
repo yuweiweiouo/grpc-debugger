@@ -12,6 +12,7 @@
   import NetworkDetails from "./components/NetworkDetails.svelte";
   import ServicesView from "./components/ServicesView.svelte";
   import SettingsView from "./components/SettingsView.svelte";
+  import PlaygroundView from "./components/PlaygroundView.svelte";
   import { addLog, clearLogs } from "./stores/network";
   import { registerSchema } from "./stores/schema";
   import { activePage } from "./stores/ui";
@@ -118,6 +119,8 @@
       </div>
     {:else if $activePage === "services"}
       <ServicesView />
+    {:else if $activePage === "playground"}
+      <PlaygroundView />
     {:else if $activePage === "settings"}
       <SettingsView />
     {/if}

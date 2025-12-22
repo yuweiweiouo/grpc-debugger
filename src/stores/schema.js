@@ -15,6 +15,8 @@ import reflectionClient from '../lib/reflection-client';
 export const services = writable([]);
 // 反射操作的狀態指示
 export const reflectionStatus = writable(null); // 'loading' | 'success' | 'failed' | null
+// 已知的伺服器站點 (用於 Playground 自動填充 URL)
+export const knownHosts = writable([]);
 
 // 已完成反射的伺服器站點 (Set<origin>)
 const reflectedServers = new Set();
@@ -97,8 +99,9 @@ async function performReflection(origin) {
     const result = await reflectionClient.fetchFromServer(origin);
     
     if (result) {
-      registerSchema(result);
+      registerSchema(result, '', origin);
       reflectedServers.add(origin);
+      knownHosts.update(hosts => hosts.includes(origin) ? hosts : [...hosts, origin]);
       reflectionStatus.set('success');
       return true;
     } else {
@@ -133,8 +136,9 @@ export function hasReflected(url) {
  * 
  * @param {object} data 包含 services 與 messages 的 schema 資料
  * @param {string} [source] 來源標籤
+ * @param {string} [sourceHost] 服務來源的主機網址
  */
-export function registerSchema(data, source = '') {
+export function registerSchema(data, source = '', sourceHost = '') {
   // 1. 更新底層解碼引擎的註冊表
   protoEngine.registerSchema(data);
 
@@ -149,11 +153,12 @@ export function registerSchema(data, source = '') {
       const newList = [...list];
       for (const service of data.services) {
         const existingIdx = newList.findIndex(s => s.fullName === service.fullName);
+        const serviceWithHost = { ...service, sourceHost: sourceHost || service.sourceHost || '' };
         if (existingIdx === -1) {
-          newList.push(service);
+          newList.push(serviceWithHost);
         } else {
           // 若已存在則更新 (例如從 Reflection 更新本地占位符)
-          newList[existingIdx] = service;
+          newList[existingIdx] = serviceWithHost;
         }
       }
       return newList;
