@@ -91,13 +91,20 @@
           <div class="field">
             <span class="label">{$t("status")}:</span>
             <span class="val"
-              >{entry.grpcStatus === 0
-                ? "OK (0)"
-                : `Error (${entry.grpcStatus})`}</span
+              >{entry.status === "pending"
+                ? "Pending (Waiting for Server...)"
+                : entry.grpcStatus === 0
+                  ? "OK (0)"
+                  : `Error (${entry.grpcStatus})`}</span
             >
           </div>
         </section>
-        {#if entry.requestHeaders}
+        {#if entry.status === "pending"}
+          <div class="pending-notice">
+            <div class="spinner"></div>
+            <p>Waiting for response from server...</p>
+          </div>
+        {:else if entry.requestHeaders}
           <section>
             <h3>{$t("request_headers")}</h3>
             {#each Object.entries(entry.requestHeaders) as [k, v]}
@@ -141,6 +148,8 @@
           </div>
           {#if entry.response}
             <JsonTree data={entry.response} />
+          {:else if entry.status === "pending"}
+            <div class="no-data">Waiting for response...</div>
           {:else}
             <div class="no-data">{$t("no_data")}</div>
           {/if}
@@ -223,6 +232,34 @@
     justify-content: center;
     color: #9ca3af;
     font-size: 14px;
+  }
+
+  .pending-notice {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 40px 20px;
+    color: #8b5cf6;
+    gap: 12px;
+  }
+
+  .spinner {
+    width: 24px;
+    height: 24px;
+    border: 3px solid #f3f3f3;
+    border-top: 3px solid #8b5cf6;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+  }
+
+  @keyframes spin {
+    0% {
+      transform: rotate(0deg);
+    }
+    100% {
+      transform: rotate(360deg);
+    }
   }
 
   .tabs {

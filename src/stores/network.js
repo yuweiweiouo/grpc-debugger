@@ -1,6 +1,6 @@
 import { writable, derived, get } from 'svelte/store';
 import { protoEngine } from '../lib/proto-engine';
-import { tryAutoReflection, hasReflected } from './schema';
+import { tryAutoReflection, hasReflected, services } from './schema';
 
 export const log = writable([]);
 export const filterValue = writable('');
@@ -8,14 +8,25 @@ export const selectedIdx = writable(null);
 export const preserveLog = writable(true);
 
 export const filteredLog = derived(
-  [log, filterValue],
-  ([$log, $filterValue]) => {
-    if (!$filterValue) return $log;
-    const lowerFilter = $filterValue.toLowerCase();
-    return $log.filter(entry => 
-      entry.method.toLowerCase().includes(lowerFilter) || 
-      entry.endpoint.toLowerCase().includes(lowerFilter)
-    );
+  [log, filterValue, services],
+  ([$log, $filterValue, $services]) => {
+    // 獲取所有隱藏服務的名稱
+    const hiddenServiceNames = $services.filter(s => s.hidden).map(s => s.fullName);
+
+    return $log.filter(entry => {
+      // 檢查此請求是否屬於隱藏服務 (例如 /pkg.Service/Method)
+      const isHidden = hiddenServiceNames.some(serviceName => 
+        entry.method && entry.method.startsWith(`/${serviceName}/`)
+      );
+      if (isHidden) return false;
+
+      if (!$filterValue) return true;
+      const lowerFilter = $filterValue.toLowerCase();
+      return (
+        entry.method.toLowerCase().includes(lowerFilter) || 
+        entry.endpoint.toLowerCase().includes(lowerFilter)
+      );
+    });
   }
 );
 
@@ -42,11 +53,41 @@ export async function addLog(entry) {
   // 確保 reflection 完成後再解碼
   const isNewSchema = await tryAutoReflection(entry.url);
   
-  // 解碼（此時 schema 一定已載入或確認不可用）
+  // 解碼（此時 schema 已確定）
   await processEntry(entry);
   
-  // 加入 log
-  log.update(list => [...list, entry]);
+  // v2.10: 雙流同步處理 - 檢查是否已存在相同 ID 的請求
+  let isMerged = false;
+  log.update(list => {
+    // 1. 精確 ID 匹配 (最優先)
+    let existingIdx = list.findIndex(e => e.id === entry.id);
+    
+    // 2. 模糊匹配 (防止 Race Condition 導致 ID 不同但內容相同)
+    // 條件：同一個 Method 且啟動時間相差 1.5 秒以內，且目前是 Pending 狀態
+    if (existingIdx === -1) {
+      existingIdx = list.findIndex(e => 
+        e.method === entry.method && 
+        Math.abs(e.startTime - entry.startTime) < 1.5 &&
+        e.status === 'pending'
+      );
+    }
+
+    if (existingIdx !== -1) {
+      const newList = [...list];
+      // 合併數據，以 entry (HAR/Finished) 提供的資訊為主，但保留之前的 requestRaw (如果是攔截到的)
+      newList[existingIdx] = { 
+        ...newList[existingIdx], 
+        ...entry,
+        // 如果原本已經有 request (攔截到的)，保留它
+        request: entry.request || newList[existingIdx].request,
+        requestRaw: entry.requestRaw || newList[existingIdx].requestRaw,
+        status: entry.status || 'finished'
+      };
+      isMerged = true;
+      return newList;
+    }
+    return [...list, entry];
+  });
 
   // 如果剛載入了新 schema，重新處理之前的所有 logs
   if (isNewSchema) {

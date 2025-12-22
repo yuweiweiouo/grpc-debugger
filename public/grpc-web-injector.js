@@ -5,7 +5,7 @@
  */
 
 (function() {
-  const VERSION = "v2.7";
+  const VERSION = "v2.16";
   const postType = "__GRPCWEB_DEVTOOLS__";
   console.log(`%c[gRPC Debugger ${VERSION}] Injector Active`, "color: #8b5cf6; font-weight: bold;");
 

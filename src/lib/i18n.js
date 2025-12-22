@@ -38,6 +38,8 @@ export const translations = {
     reflecting: 'Reflecting...',
     sync_ok: 'Sync OK',
     sync_failed: 'Sync Failed',
+    hide_from_log: 'Hide from log',
+    show_in_log: 'Show in log',
   },
   zh: {
     network: '網路紀錄',
@@ -75,6 +77,8 @@ export const translations = {
     reflecting: '同步中...',
     sync_ok: '同步成功',
     sync_failed: '同步失敗',
+    hide_from_log: '從紀錄隱藏',
+    show_in_log: '顯示於紀錄',
   }
 };
 

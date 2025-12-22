@@ -172,3 +172,18 @@ export function clearAllSchemas() {
   protoEngine.schemas.clear();
   protoEngine.serviceMap.clear();
 }
+
+/**
+ * 切換服務的可見性（是否在網路列表中顯示）
+ * @param {string} fullName 
+ */
+export function toggleServiceVisibility(fullName) {
+  services.update(list => {
+    return list.map(s => {
+      if (s.fullName === fullName) {
+        return { ...s, hidden: !s.hidden };
+      }
+      return s;
+    });
+  });
+}

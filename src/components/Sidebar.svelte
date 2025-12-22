@@ -35,7 +35,7 @@
     >
       <Settings size={20} />
     </button>
-    <div class="version">v2.7</div>
+    <div class="version">v2.16</div>
   </div>
 </nav>
 
