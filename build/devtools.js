@@ -67,6 +67,27 @@ const pendingEntries = [];
 let panelWindow = null;
 let panelReady = false;
 
+// 緩存從 fetch-interceptor 攔截的 request bodies
+const capturedBodies = new Map();
+
+// 監聽來自 background 的攔截訊息
+chrome.runtime.onMessage.addListener((message) => {
+  if (message.type === '__GRPCWEB_DEVTOOLS__' && message.action === 'capturedRequestBody') {
+    // 用 URL 作為 key 存儲 Base64 body
+    capturedBodies.set(message.url, {
+      bodyBase64: message.bodyBase64,
+      timestamp: Date.now(),
+    });
+    // 清理 30 秒前的舊資料
+    const now = Date.now();
+    for (const [key, value] of capturedBodies.entries()) {
+      if (now - value.timestamp > 30000) {
+        capturedBodies.delete(key);
+      }
+    }
+  }
+});
+
 /**
  * 處理並發送 gRPC 請求到面板
  */
@@ -79,6 +100,16 @@ function processEntry(entry) {
   const grpcStatus = parseGrpcStatus(responseHeaders);
 
   entry.getContent((body, encoding) => {
+    // 優先使用 fetch-interceptor 攔截的 Base64 body（解決 binary 編碼損壞問題）
+    const captured = capturedBodies.get(entry.request.url);
+    const requestRaw = captured?.bodyBase64 || entry.request.postData?.text || null;
+    const requestBase64Encoded = !!captured?.bodyBase64;  // 攔截的 body 是 Base64 編碼
+    
+    // 使用後從緩存移除
+    if (captured) {
+      capturedBodies.delete(entry.request.url);
+    }
+    
     const data = {
       id: entry.startedDateTime + '_' + entry.request.url,
       method,
@@ -93,7 +124,8 @@ function processEntry(entry) {
       responseHeaders,
       grpcStatus: grpcStatus.code,
       grpcMessage: grpcStatus.message,
-      requestRaw: entry.request.postData?.text || null,
+      requestRaw,
+      requestBase64Encoded,
       responseRaw: body,
       responseBase64Encoded: encoding === 'base64',
       request: null,

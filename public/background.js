@@ -20,12 +20,40 @@
 /** @type {Object.<number, TabConnection>} Tab ID -> 連線對照表 */
 const connections = {};
 
+/** @type {Map<string, {bodyBase64: string, timestamp: number}>} URL -> 攔截的 request body */
+const capturedBodies = new Map();
+
+// 定期清理過期的 captured bodies（超過 30 秒）
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, value] of capturedBodies.entries()) {
+    if (now - value.timestamp > 30000) {
+      capturedBodies.delete(key);
+    }
+  }
+}, 10000);
+
 // ============================================================================
 // Message Handlers
 // ============================================================================
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const tabId = sender.tab?.id;
+  
+  // 處理 fetch-interceptor 攔截的 request body
+  if (message.type === '__GRPCWEB_DEVTOOLS__' && message.action === 'capturedRequestBody') {
+    const key = `${tabId}_${message.url}`;
+    capturedBodies.set(key, {
+      bodyBase64: message.bodyBase64,
+      timestamp: Date.now(),
+    });
+    // 同時發送給 panel
+    if (tabId && connections[tabId]?.panel) {
+      connections[tabId].panel.postMessage(message);
+    }
+    return;
+  }
+  
   if (!tabId || !connections[tabId]?.panel) return;
 
   // Relay registration messages to the panel
