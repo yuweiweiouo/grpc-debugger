@@ -4,8 +4,8 @@
  * Relays messages from the page to the background script.
  */
 
-// Inject registration helpers
-const scripts = ["grpc-web-injector.js", "connect-web-interceptor.js"];
+// Inject registration helpers and fetch interceptor
+const scripts = ["fetch-interceptor.js", "grpc-web-injector.js", "connect-web-interceptor.js"];
 scripts.forEach(file => {
   const s = document.createElement("script");
   s.src = chrome.runtime.getURL(file);

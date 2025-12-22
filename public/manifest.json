@@ -21,7 +21,7 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["connect-web-interceptor.js", "grpc-web-injector.js"],
+      "resources": ["fetch-interceptor.js", "connect-web-interceptor.js", "grpc-web-injector.js"],
       "matches": ["<all_urls>"]
     }
   ],
