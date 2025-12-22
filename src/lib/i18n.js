@@ -46,6 +46,16 @@ export const translations = {
     show_in_log: 'Show in log',
     copy_json: 'Copy JSON',
     copy_hint: 'Press Ctrl+C (or Cmd+C) to copy',
+    playground: 'Playground',
+    select_service: 'Select Service',
+    select_method: 'Select Method',
+    send_request: 'Send',
+    request_body: 'Request Body',
+    response_body: 'Response',
+    sending: 'Sending...',
+    enter_base_url: 'Enter Base URL',
+    edit_url: 'Edit URL',
+    lock_url: 'Lock URL',
   },
   zh: {
     network: '網路紀錄',
@@ -87,6 +97,16 @@ export const translations = {
     show_in_log: '顯示於紀錄',
     copy_json: '複製 JSON',
     copy_hint: '按 Ctrl+C (或 Cmd+C) 複製',
+    playground: '請求測試',
+    select_service: '選擇服務',
+    select_method: '選擇方法',
+    send_request: '發送',
+    request_body: '請求內容',
+    response_body: '回應結果',
+    sending: '傳送中...',
+    enter_base_url: '輸入伺服器網址',
+    edit_url: '編輯網址',
+    lock_url: '鎖定網址',
   }
 };
 
