@@ -1,30 +1,34 @@
 <script>
-  import { selectedEntry } from '../stores/network';
-  import { protoEngine } from '../lib/proto-engine';
-  import { t } from '../lib/i18n';
-  import JsonTree from './JsonTree.svelte';
-  import ProtoFieldRow from './ProtoFieldRow.svelte';
+  import { selectedEntry } from "../stores/network";
+  import { protoEngine } from "../lib/proto-engine";
+  import { t } from "../lib/i18n";
+  import JsonTree from "./JsonTree.svelte";
+  import ProtoFieldRow from "./ProtoFieldRow.svelte";
 
-  let activeTab = 'request';
-  let copyFeedback = '';
+  let activeTab = "request";
+  let copyFeedback = "";
 
   $: entry = $selectedEntry;
-  $: protoDef = entry ? protoEngine.serviceMap.get(entry.method) : null;
-  $: requestMsg = protoDef ? protoEngine.findMessage(protoDef.requestType) : null;
-  $: responseMsg = protoDef ? protoEngine.findMessage(protoDef.responseType) : null;
+  $: protoDef = entry ? protoEngine.findMethod(entry.method) : null;
+  $: requestMsg = protoDef
+    ? protoEngine.findMessage(protoDef.requestType)
+    : null;
+  $: responseMsg = protoDef
+    ? protoEngine.findMessage(protoDef.responseType)
+    : null;
 
   function setTab(tab) {
     activeTab = tab;
   }
 
   let showCopyModal = false;
-  let copyText = '';
+  let copyText = "";
 
   function jsonReplacer(key, value) {
     if (value instanceof Uint8Array) {
       return `[bytes: ${value.length} bytes]`;
     }
-    if (typeof value === 'bigint') {
+    if (typeof value === "bigint") {
       return value.toString();
     }
     return value;
@@ -41,7 +45,7 @@
 
   function closeCopyModal() {
     showCopyModal = false;
-    copyText = '';
+    copyText = "";
   }
 
   function selectAllText(e) {
@@ -51,37 +55,67 @@
 
 <div class="network-details">
   {#if !entry}
-    <div class="empty">{$t('select_request')}</div>
+    <div class="empty">{$t("select_request")}</div>
   {:else}
     <div class="tabs">
-      <button class:active={activeTab === 'headers'} on:click={() => setTab('headers')}>{$t('headers')}</button>
-      <button class:active={activeTab === 'request'} on:click={() => setTab('request')}>{$t('request')}</button>
-      <button class:active={activeTab === 'response'} on:click={() => setTab('response')}>{$t('response')}</button>
-      <button class:active={activeTab === 'proto'} on:click={() => setTab('proto')}>{$t('proto')}</button>
+      <button
+        class:active={activeTab === "headers"}
+        on:click={() => setTab("headers")}>{$t("headers")}</button
+      >
+      <button
+        class:active={activeTab === "request"}
+        on:click={() => setTab("request")}>{$t("request")}</button
+      >
+      <button
+        class:active={activeTab === "response"}
+        on:click={() => setTab("response")}>{$t("response")}</button
+      >
+      <button
+        class:active={activeTab === "proto"}
+        on:click={() => setTab("proto")}>{$t("proto")}</button
+      >
     </div>
 
     <div class="content">
-      {#if activeTab === 'headers'}
+      {#if activeTab === "headers"}
         <section>
-          <h3>{$t('general')}</h3>
-          <div class="field"><span class="label">{$t('method')}:</span> <span class="val">{entry.method}</span></div>
-          <div class="field"><span class="label">{$t('url')}:</span> <span class="val">{entry.url}</span></div>
-          <div class="field"><span class="label">{$t('status')}:</span> <span class="val">{entry.grpcStatus === 0 ? 'OK (0)' : `Error (${entry.grpcStatus})`}</span></div>
+          <h3>{$t("general")}</h3>
+          <div class="field">
+            <span class="label">{$t("method")}:</span>
+            <span class="val">{entry.method}</span>
+          </div>
+          <div class="field">
+            <span class="label">{$t("url")}:</span>
+            <span class="val">{entry.url}</span>
+          </div>
+          <div class="field">
+            <span class="label">{$t("status")}:</span>
+            <span class="val"
+              >{entry.grpcStatus === 0
+                ? "OK (0)"
+                : `Error (${entry.grpcStatus})`}</span
+            >
+          </div>
         </section>
         {#if entry.requestHeaders}
           <section>
-            <h3>{$t('request_headers')}</h3>
+            <h3>{$t("request_headers")}</h3>
             {#each Object.entries(entry.requestHeaders) as [k, v]}
-              <div class="field"><span class="label">{k}:</span> <span class="val">{v}</span></div>
+              <div class="field">
+                <span class="label">{k}:</span> <span class="val">{v}</span>
+              </div>
             {/each}
           </section>
         {/if}
-      {:else if activeTab === 'request'}
+      {:else if activeTab === "request"}
         <div class="data-view">
           <div class="data-header">
             <span>Request Data</span>
             {#if entry.request}
-              <button class="copy-btn" on:click={() => openCopyModal(entry.request)}>
+              <button
+                class="copy-btn"
+                on:click={() => openCopyModal(entry.request)}
+              >
                 📋 Copy JSON
               </button>
             {/if}
@@ -89,15 +123,18 @@
           {#if entry.request}
             <JsonTree data={entry.request} />
           {:else}
-            <div class="no-data">{$t('no_data')}</div>
+            <div class="no-data">{$t("no_data")}</div>
           {/if}
         </div>
-      {:else if activeTab === 'response'}
+      {:else if activeTab === "response"}
         <div class="data-view">
           <div class="data-header">
             <span>Response Data</span>
             {#if entry.response}
-              <button class="copy-btn" on:click={() => openCopyModal(entry.response)}>
+              <button
+                class="copy-btn"
+                on:click={() => openCopyModal(entry.response)}
+              >
                 📋 Copy JSON
               </button>
             {/if}
@@ -105,16 +142,19 @@
           {#if entry.response}
             <JsonTree data={entry.response} />
           {:else}
-            <div class="no-data">{$t('no_data')}</div>
+            <div class="no-data">{$t("no_data")}</div>
           {/if}
         </div>
-      {:else if activeTab === 'proto'}
+      {:else if activeTab === "proto"}
         <div class="proto-view">
           {#if protoDef}
             <div class="msg-section">
-              <h4>{$t('request_message')}: {protoDef.requestType}</h4>
+              <h4>{$t("request_message")}: {protoDef.requestType}</h4>
               <table class="proto-table">
-                <thead><tr><th>#</th><th>{$t('name')}</th><th>{$t('type')}</th></tr></thead>
+                <thead
+                  ><tr><th>#</th><th>{$t("name")}</th><th>{$t("type")}</th></tr
+                  ></thead
+                >
                 <tbody>
                   {#each requestMsg?.fields || [] as f}
                     <ProtoFieldRow field={f} />
@@ -123,9 +163,12 @@
               </table>
             </div>
             <div class="msg-section">
-              <h4>{$t('response_message')}: {protoDef.responseType}</h4>
+              <h4>{$t("response_message")}: {protoDef.responseType}</h4>
               <table class="proto-table">
-                <thead><tr><th>#</th><th>{$t('name')}</th><th>{$t('type')}</th></tr></thead>
+                <thead
+                  ><tr><th>#</th><th>{$t("name")}</th><th>{$t("type")}</th></tr
+                  ></thead
+                >
                 <tbody>
                   {#each responseMsg?.fields || [] as f}
                     <ProtoFieldRow field={f} />
@@ -134,7 +177,7 @@
               </table>
             </div>
           {:else}
-            <div class="no-data">{$t('no_data')}</div>
+            <div class="no-data">{$t("no_data")}</div>
           {/if}
         </div>
       {/if}
@@ -143,15 +186,21 @@
 </div>
 
 {#if showCopyModal}
-  <div class="modal-overlay" on:click={closeCopyModal} on:keydown={(e) => e.key === 'Escape' && closeCopyModal()} role="button" tabindex="-1">
+  <div
+    class="modal-overlay"
+    on:click={closeCopyModal}
+    on:keydown={(e) => e.key === "Escape" && closeCopyModal()}
+    role="button"
+    tabindex="-1"
+  >
     <div class="modal-content" on:click|stopPropagation role="dialog">
       <div class="modal-header">
         <span>Copy JSON</span>
         <button class="modal-close" on:click={closeCopyModal}>✕</button>
       </div>
-      <textarea 
-        class="copy-textarea" 
-        readonly 
+      <textarea
+        class="copy-textarea"
+        readonly
         value={copyText}
         on:focus={selectAllText}
       ></textarea>
@@ -200,7 +249,7 @@
   }
 
   .tabs button.active::after {
-    content: '';
+    content: "";
     position: absolute;
     bottom: -1px;
     left: 0;
@@ -245,7 +294,8 @@
     color: #111827;
   }
 
-  .data-view, .proto-view {
+  .data-view,
+  .proto-view {
     padding: 8px;
   }
 
@@ -306,7 +356,8 @@
     font-size: 12px;
   }
 
-  .proto-table th, .proto-table td {
+  .proto-table th,
+  .proto-table td {
     border: 1px solid #f3f4f6;
     padding: 8px;
     text-align: left;

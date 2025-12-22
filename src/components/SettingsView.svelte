@@ -1,10 +1,17 @@
 <script>
-  import { language } from '../stores/settings';
-  import { t } from '../lib/i18n';
-  import { Settings, Globe } from 'lucide-svelte';
+  import { language } from "../stores/settings";
+  import { t } from "../lib/i18n";
+  import { Settings, Globe, Bug } from "lucide-svelte";
 
   function setLanguage(lang) {
     language.set(lang);
+  }
+
+  function openIssue() {
+    window.open(
+      "https://github.com/yuweiweiouo/grpc-debugger/issues/new",
+      "_blank",
+    );
   }
 </script>
 
@@ -12,7 +19,7 @@
   <header>
     <div class="title">
       <Settings size={20} />
-      <h2>{$t('settings')}</h2>
+      <h2>{$t("settings")}</h2>
     </div>
   </header>
 
@@ -20,28 +27,37 @@
     <section class="card">
       <div class="card-title">
         <Globe size={18} />
-        <h3>{$t('language')}</h3>
+        <h3>{$t("language")}</h3>
       </div>
-      
+
       <div class="lang-options">
-        <button 
-          class:active={$language === 'en'} 
-          on:click={() => setLanguage('en')}
+        <button
+          class:active={$language === "en"}
+          on:click={() => setLanguage("en")}
         >
           English
         </button>
-        <button 
-          class:active={$language === 'zh'} 
-          on:click={() => setLanguage('zh')}
+        <button
+          class:active={$language === "zh"}
+          on:click={() => setLanguage("zh")}
         >
           繁體中文
         </button>
       </div>
     </section>
 
-    <div class="version">
-      gRPC Debugger v1.0.0
-    </div>
+    <section class="card" style="margin-top: 16px;">
+      <div class="card-title">
+        <Bug size={18} />
+        <h3>{$t("report_bug")}</h3>
+      </div>
+      <p class="description">{$t("report_bug_desc")}</p>
+      <button class="report-btn" on:click={openIssue}>
+        {$t("open_github_issue")}
+      </button>
+    </section>
+
+    <div class="version">gRPC Debugger v1.0.0</div>
   </div>
 </div>
 
@@ -79,7 +95,7 @@
     border: 1px solid #e5e7eb;
     border-radius: 12px;
     padding: 20px;
-    box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
   }
 
   .card-title {
@@ -123,6 +139,25 @@
     border-color: #2563eb;
     color: #2563eb;
     font-weight: 500;
+  }
+
+  .description {
+    margin: 0 0 16px 0;
+    font-size: 13px;
+    color: #6b7280;
+    line-height: 1.5;
+  }
+
+  .report-btn {
+    width: 100%;
+    background: #ef4444;
+    border-color: #ef4444;
+    color: white;
+  }
+
+  .report-btn:hover {
+    background: #dc2626;
+    border-color: #dc2626;
   }
 
   .version {

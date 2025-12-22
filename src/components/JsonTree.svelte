@@ -4,18 +4,20 @@
   export let depth = 0;
   export let expanded = depth < 2;
 
-  $: isObject = typeof data === 'object' && data !== null && !(data instanceof Uint8Array);
-  $: keys = isObject ? Object.keys(data) : [];
+  $: isObject =
+    typeof data === "object" && data !== null && !(data instanceof Uint8Array);
+  $: objectTypeName = isObject && data.$typeName ? data.$typeName : "";
+  $: keys = isObject ? Object.keys(data).filter((k) => k !== "$typeName") : [];
   $: type = getType(data);
 
   /**
    * 取得資料類型名稱
    */
   function getType(val) {
-    if (Array.isArray(val)) return 'Array';
-    if (val instanceof Uint8Array) return 'Uint8Array';
-    if (typeof val === 'bigint') return 'BigInt';
-    if (typeof val === 'object' && val !== null) return 'Object';
+    if (Array.isArray(val)) return "Array";
+    if (val instanceof Uint8Array) return "Uint8Array";
+    if (typeof val === "bigint") return "BigInt";
+    if (typeof val === "object" && val !== null) return "Object";
     return typeof val;
   }
 
@@ -23,17 +25,19 @@
    * 格式化特殊類型的顯示值
    */
   function formatValue(val) {
-    if (val === null) return 'null';
-    if (val === undefined) return 'undefined';
-    if (typeof val === 'bigint') return val.toString() + 'n';
+    if (val === null) return "null";
+    if (val === undefined) return "undefined";
+    if (typeof val === "bigint") return val.toString(); // 移除 'n' 標識
     if (val instanceof Uint8Array) {
-      if (val.length === 0) return '[]';
+      if (val.length === 0) return "[]";
       if (val.length <= 16) {
-        return `[${Array.from(val).map(b => '0x' + b.toString(16).padStart(2, '0')).join(', ')}]`;
+        return `[${Array.from(val)
+          .map((b) => "0x" + b.toString(16).padStart(2, "0"))
+          .join(", ")}]`;
       }
       return `[${val.length} bytes]`;
     }
-    if (typeof val === 'string') return `"${val}"`;
+    if (typeof val === "string") return `"${val}"`;
     return String(val);
   }
 
@@ -41,7 +45,7 @@
     expanded = !expanded;
   }
   function handleKeyDown(e) {
-    if (e.key === 'Enter' || e.key === ' ') {
+    if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
       toggle();
     }
@@ -50,16 +54,18 @@
 
 <div class="json-node" style="padding-left: {depth > 0 ? 16 : 0}px">
   {#if isObject}
-    <div 
-      class="item" 
-      on:click={toggle} 
+    <div
+      class="item"
+      on:click={toggle}
       on:keydown={handleKeyDown}
       role="button"
       tabindex="0"
     >
-      <span class="toggle">{expanded ? '▼' : '▶'}</span>
+      <span class="toggle">{expanded ? "▼" : "▶"}</span>
       {#if label}<span class="key">{label}:</span>{/if}
-      <span class="type">{type} [{keys.length}]</span>
+      <span class="type">
+        {objectTypeName || type} [{keys.length}]
+      </span>
     </div>
     {#if expanded}
       {#each keys as key}
@@ -69,7 +75,13 @@
   {:else}
     <div class="item leaf">
       {#if label}<span class="key">{label}:</span>{/if}
-      <span class="value" class:string={typeof data === 'string'} class:number={typeof data === 'number'} class:bigint={typeof data === 'bigint'} class:bytes={data instanceof Uint8Array}>
+      <span
+        class="value"
+        class:string={typeof data === "string"}
+        class:number={typeof data === "number"}
+        class:bigint={typeof data === "bigint"}
+        class:bytes={data instanceof Uint8Array}
+      >
         {formatValue(data)}
       </span>
     </div>
@@ -78,7 +90,7 @@
 
 <style>
   .json-node {
-    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-family: "JetBrains Mono", "Fira Code", monospace;
     font-size: 13px;
     line-height: 1.6;
     user-select: text;

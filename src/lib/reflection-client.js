@@ -1,75 +1,127 @@
-// gRPC-Web Reflection Client
-// Fetches both service list and full proto definitions (including message field names)
+/**
+ * gRPC Reflection Client
+ * 負責透過 gRPC Server Reflection API 取得服務定義
+ * 使用 @bufbuild/protobuf 官方庫解析 FileDescriptorProto
+ */
+
+import { sendGrpcWebRequest } from './grpc-web-transport.js';
+import {
+  parseListServicesResponse,
+  parseFileDescriptorResponse,
+} from './descriptor-parser.js';
+import { createLogger } from './logger.js';
+import { fromBinary, createFileRegistry, create } from '@bufbuild/protobuf';
+import { 
+  FileDescriptorProtoSchema,
+  FileDescriptorSetSchema,
+  file_google_protobuf_timestamp,
+  file_google_protobuf_duration,
+  file_google_protobuf_any,
+  file_google_protobuf_struct,
+  file_google_protobuf_wrappers,
+  file_google_protobuf_empty,
+  file_google_protobuf_field_mask,
+  file_google_protobuf_descriptor,
+} from '@bufbuild/protobuf/wkt';
+
+const logger = createLogger('Reflection');
+
+/**
+ * Well-known types 的 file descriptors 映射
+ * 用於在 createFileRegistry resolver 中提供 Google 預設 types
+ */
+const WKT_FILES = new Map([
+  ['google/protobuf/timestamp.proto', file_google_protobuf_timestamp],
+  ['google/protobuf/duration.proto', file_google_protobuf_duration],
+  ['google/protobuf/any.proto', file_google_protobuf_any],
+  ['google/protobuf/struct.proto', file_google_protobuf_struct],
+  ['google/protobuf/wrappers.proto', file_google_protobuf_wrappers],
+  ['google/protobuf/empty.proto', file_google_protobuf_empty],
+  ['google/protobuf/field_mask.proto', file_google_protobuf_field_mask],
+  ['google/protobuf/descriptor.proto', file_google_protobuf_descriptor],
+]);
+
+/**
+ * 支援的 Reflection 服務版本
+ */
+const REFLECTION_SERVICES = [
+  'grpc.reflection.v1.ServerReflection',
+  'grpc.reflection.v1alpha.ServerReflection',
+];
 
 class ReflectionClient {
   constructor() {
+    /** @type {Map<string, object>} 快取已反射的定義 */
     this.cache = new Map();
   }
 
+  /**
+   * 從伺服器取得所有服務定義
+   * 返回可直接用於 proto-engine 的結構
+   * @param {string} serverUrl - gRPC 伺服器 URL
+   * @returns {Promise<{services: object[], messages: object, registry: import('@bufbuild/protobuf').FileRegistry | null} | null>}
+   */
   async fetchFromServer(serverUrl) {
-    console.log("[Reflection] Attempting for:", serverUrl);
+    logger.info('Attempting for:', serverUrl);
 
-    // Try gRPC-Web binary first (most compatible)
-    const reflectionServices = [
-      "grpc.reflection.v1.ServerReflection",
-      "grpc.reflection.v1alpha.ServerReflection",
-    ];
-
-    for (const reflectionService of reflectionServices) {
+    for (const reflectionService of REFLECTION_SERVICES) {
       try {
         // Step 1: Get service list
         const services = await this.listServices(serverUrl, reflectionService);
         if (!services || services.length === 0) continue;
 
-        console.log("[Reflection] Found services:", services);
+        logger.info('Found services:', services);
 
-        // Step 2: Get file descriptors for each service (with dependency resolution)
-        const result = {
-          services: [],
-          messages: {},
-        };
-        
+        // Step 2: 收集所有 FileDescriptorProto 二進位資料
+        const allDescriptorBytes = [];
         const loadedFiles = new Set();
-        
+
+        /**
+         * 遞迴載入 FileDescriptor 及其依賴
+         * @param {Uint8Array[] | null} descriptorBytes
+         */
         const loadFileDescriptors = async (descriptorBytes) => {
           if (!descriptorBytes) return;
-          
+
           for (const bytes of descriptorBytes) {
-            const descriptor = this.bytesToDescriptor(bytes);
-            
+            // 使用官方 API 解析 FileDescriptorProto
+            let descriptor;
+            try {
+              descriptor = fromBinary(FileDescriptorProtoSchema, bytes);
+            } catch (e) {
+              logger.warn('Failed to parse FileDescriptorProto:', e.message);
+              continue;
+            }
+
             // Skip if already loaded
             if (loadedFiles.has(descriptor.name)) continue;
             loadedFiles.add(descriptor.name);
             
-            // Parse current file
-            const parsed = this.parseFileDescriptorSingle(descriptor);
-            if (parsed) {
-              result.services.push(...(parsed.services || []));
-              Object.assign(result.messages, parsed.messages || {});
-            }
-            
+            // 保存原始 bytes
+            allDescriptorBytes.push(bytes);
+
             // Recursively load dependencies
             for (const depName of descriptor.dependency || []) {
               if (loadedFiles.has(depName)) continue;
-              
+
               try {
-                const depDescriptor = await this.getFileByFilename(
+                const depDescriptorBytes = await this.getFileByFilename(
                   serverUrl,
                   reflectionService,
                   depName
                 );
-                if (depDescriptor) {
-                  await loadFileDescriptors(depDescriptor);
+                if (depDescriptorBytes) {
+                  await loadFileDescriptors(depDescriptorBytes);
                 }
               } catch (e) {
-                console.debug(`[Reflection] Could not load dependency: ${depName}`);
+                logger.debug(`Could not load dependency: ${depName}`);
               }
             }
           }
         };
 
         for (const serviceName of services) {
-          if (serviceName.includes("grpc.reflection")) continue;
+          if (serviceName.includes('grpc.reflection')) continue;
 
           try {
             const fileDescriptor = await this.getFileContainingSymbol(
@@ -78,25 +130,244 @@ class ReflectionClient {
               serviceName
             );
 
+            console.log(`[ReflectionClient] Got descriptor for ${serviceName}:`, fileDescriptor ? `${fileDescriptor.length} bytes` : 'null');
             await loadFileDescriptors(fileDescriptor);
           } catch (e) {
-            console.warn(`[Reflection] Failed to get descriptor for ${serviceName}:`, e.message);
+            console.error(`[ReflectionClient] Failed to get descriptor for ${serviceName}:`, e);
           }
         }
 
-        if (result.services.length > 0 || Object.keys(result.messages).length > 0) {
-          console.log("[Reflection] Complete result:", result);
-          console.log("[Reflection] Loaded message types:", Object.keys(result.messages));
+        console.log(`[ReflectionClient] allDescriptorBytes.length = ${allDescriptorBytes.length}`);
+        
+        if (allDescriptorBytes.length > 0) {
+          // 使用官方 API 從所有 FileDescriptorProto 建立 FileRegistry
+          const result = this._buildRegistryFromBytes(allDescriptorBytes);
+          
+          console.log(`[ReflectionClient] Result: ${result.services.length} services, ${Object.keys(result.messages).length} messages`);
+          
           return result;
+        } else {
+          console.warn(`[ReflectionClient] No descriptors collected!`);
         }
       } catch (e) {
-        console.warn(`[Reflection] ${reflectionService} failed:`, e.message);
+        console.error(`[ReflectionClient] ${reflectionService} failed:`, e);
       }
     }
 
     return null;
   }
 
+  /**
+   * 從 FileDescriptorProto 二進位資料建立 Registry 和 serviceMap
+   * @param {Uint8Array[]} descriptorBytesList
+   * @returns {{services: object[], messages: object, registry: import('@bufbuild/protobuf').FileRegistry | null}}
+   */
+  _buildRegistryFromBytes(descriptorBytesList) {
+    const result = {
+      services: [],
+      messages: {},
+      registry: null,
+    };
+
+    console.log(`[ReflectionClient] _buildRegistryFromBytes: received ${descriptorBytesList.length} descriptors`);
+
+    // 解析所有 FileDescriptorProto
+    const fileDescriptors = [];
+    const fileDescriptorMap = new Map(); // name -> FileDescriptorProto
+    
+    for (const bytes of descriptorBytesList) {
+      try {
+        const fd = fromBinary(FileDescriptorProtoSchema, bytes);
+        fileDescriptors.push(fd);
+        fileDescriptorMap.set(fd.name, fd);
+        console.log(`[ReflectionClient] Parsed: ${fd.name}, messages: ${fd.messageType?.length || 0}, services: ${fd.service?.length || 0}`);
+      } catch (e) {
+        console.error('[ReflectionClient] Failed to parse FileDescriptorProto:', e);
+      }
+    }
+
+    console.log(`[ReflectionClient] Total parsed: ${fileDescriptors.length} file descriptors`);
+
+    // 建立 FileRegistry
+    // 關鍵：createFileRegistry 要求檔案按拓撲順序排列（依賴項在前）
+    if (fileDescriptors.length > 0) {
+      // 將 WKT 加入 fileDescriptorMap（作為依賴解析用）
+      for (const [name, wktFile] of WKT_FILES.entries()) {
+        if (!fileDescriptorMap.has(name) && wktFile.proto) {
+          fileDescriptorMap.set(name, wktFile.proto);
+        }
+      }
+
+      // 拓撲排序：確保依賴項在被依賴項之前
+      const sortedProtos = this._topologicalSort(fileDescriptorMap);
+      console.log(`[ReflectionClient] Topologically sorted ${sortedProtos.length} protos`);
+
+      let registry = null;
+      try {
+        const descriptorSet = create(FileDescriptorSetSchema, { file: sortedProtos });
+        registry = createFileRegistry(descriptorSet);
+        console.log(`[ReflectionClient] Registry created successfully with ${sortedProtos.length} descriptors`);
+      } catch (e) {
+        console.error('[ReflectionClient] Failed to create registry:', e.message);
+        
+        // Fallback: 使用 functional resolver 模式
+        try {
+          const resolver = (name) => WKT_FILES.get(name)?.proto || fileDescriptorMap.get(name);
+          registry = createFileRegistry(fileDescriptors[0], resolver);
+          console.log(`[ReflectionClient] Registry created via functional resolver fallback`);
+        } catch (eFallback) {
+          console.error('[ReflectionClient] All registry creation methods failed:', eFallback.message);
+        }
+      }
+
+      if (registry) {
+        result.registry = registry;
+      }
+    }
+
+    // 從 registry 提取 services 和 messages（向後兼容格式）
+    if (result.registry) {
+      for (const desc of result.registry) {
+        if (desc.kind === 'message') {
+          // 將 DescMessage 轉換為舊格式
+          result.messages[desc.typeName] = this._descMessageToLegacy(desc);
+        } else if (desc.kind === 'service') {
+          result.services.push(this._descServiceToLegacy(desc));
+        }
+      }
+    } else {
+      console.warn(`[ReflectionClient] Registry is null!`);
+    }
+
+    return result;
+  }
+
+  /**
+   * 將 DescMessage 轉換為舊格式
+   * @param {import('@bufbuild/protobuf').DescMessage} desc
+   * @returns {object}
+   */
+  _descMessageToLegacy(desc) {
+    return {
+      name: desc.name,
+      fullName: desc.typeName,
+      fields: desc.fields.map(f => ({
+        name: f.name,
+        number: f.number,
+        type: this._fieldKindToType(f),
+        label: f.repeated ? 3 : f.proto.label || 1, // 3 = REPEATED
+        type_name: f.message?.typeName || f.enum?.typeName || '',
+      })),
+      // 保留原始 desc 以便使用官方 API 解碼
+      _desc: desc,
+    };
+  }
+
+  /**
+   * 將 Field 種類轉換為 type 數字
+   * @param {import('@bufbuild/protobuf').DescField} f
+   * @returns {number}
+   */
+  _fieldKindToType(f) {
+    // 根據 google.protobuf.FieldDescriptorProto.Type
+    const kindMap = {
+      'double': 1,
+      'float': 2,
+      'int64': 3,
+      'uint64': 4,
+      'int32': 5,
+      'fixed64': 6,
+      'fixed32': 7,
+      'bool': 8,
+      'string': 9,
+      'bytes': 12,
+      'uint32': 13,
+      'sfixed32': 15,
+      'sfixed64': 16,
+      'sint32': 17,
+      'sint64': 18,
+      'message': 11,
+      'enum': 14,
+      'group': 10,
+    };
+    
+    if (f.kind === 'message') return 11;
+    if (f.kind === 'enum') return 14;
+    if (f.kind === 'map') return 11; // map 在 wire 上是 message
+    if (f.kind === 'scalar') {
+      return kindMap[f.scalar] || 0;
+    }
+    return 0;
+  }
+
+  /**
+   * 拓撲排序 FileDescriptorProto
+   * 確保依賴項排在被依賴項之前
+   * @param {Map<string, object>} fileMap - name -> FileDescriptorProto
+   * @returns {object[]} - 排序後的 FileDescriptorProto 陣列
+   */
+  _topologicalSort(fileMap) {
+    const sorted = [];
+    const visited = new Set();
+    const visiting = new Set(); // 用於偵測循環依賴
+
+    const visit = (name) => {
+      if (visited.has(name)) return;
+      if (visiting.has(name)) {
+        // 循環依賴，跳過避免無限遞迴
+        console.warn(`[ReflectionClient] Circular dependency detected: ${name}`);
+        return;
+      }
+
+      const fd = fileMap.get(name);
+      if (!fd) {
+        // 找不到依賴，可能是外部庫，跳過
+        return;
+      }
+
+      visiting.add(name);
+
+      // 先處理所有依賴
+      for (const dep of fd.dependency || []) {
+        visit(dep);
+      }
+
+      visiting.delete(name);
+      visited.add(name);
+      sorted.push(fd);
+    };
+
+    // 訪問所有檔案
+    for (const name of fileMap.keys()) {
+      visit(name);
+    }
+
+    return sorted;
+  }
+
+  /**
+   * 將 DescService 轉換為舊格式
+   * @param {import('@bufbuild/protobuf').DescService} desc
+   * @returns {object}
+   */
+  _descServiceToLegacy(desc) {
+    return {
+      name: desc.name,
+      fullName: desc.typeName,
+      methods: desc.methods.map(m => ({
+        name: m.name,
+        requestType: m.input.typeName,
+        responseType: m.output.typeName,
+      })),
+    };
+  }
+
+  /**
+   * 列出伺服器上的所有服務
+   * @param {string} serverUrl
+   * @param {string} reflectionService
+   * @returns {Promise<string[] | null>}
+   */
   async listServices(serverUrl, reflectionService) {
     const url = `${serverUrl}/${reflectionService}/ServerReflectionInfo`;
     const host = new URL(serverUrl).host;
@@ -104,636 +375,97 @@ class ReflectionClient {
     // Encode: host = host (field 1), list_services = "" (field 7)
     const hostBytes = new TextEncoder().encode(host);
     const request = new Uint8Array(2 + hostBytes.length + 2);
-    
+
     let offset = 0;
     request[offset++] = 0x0a; // field 1, wire type 2
     request[offset++] = hostBytes.length;
     request.set(hostBytes, offset);
     offset += hostBytes.length;
-    
+
     request[offset++] = 0x3a; // field 7, wire type 2
     request[offset++] = 0x00; // length 0
 
-    const responses = await this.sendGrpcWebRequest(url, request);
+    const responses = await sendGrpcWebRequest(url, request);
     if (!responses) return null;
 
     const services = [];
     for (const resp of responses) {
-      services.push(...this.parseListServicesResponse(resp));
+      services.push(...parseListServicesResponse(resp));
     }
     return services;
   }
 
+  /**
+   * 取得包含指定 symbol 的 FileDescriptor
+   * @param {string} serverUrl
+   * @param {string} reflectionService
+   * @param {string} symbol - 完整的 service 或 message 名稱
+   * @returns {Promise<Uint8Array[] | null>}
+   */
   async getFileContainingSymbol(serverUrl, reflectionService, symbol) {
     const url = `${serverUrl}/${reflectionService}/ServerReflectionInfo`;
     const host = new URL(serverUrl).host;
 
-    // Encode: host = host (field 1), file_containing_symbol = symbol (field 4)
     const hostBytes = new TextEncoder().encode(host);
     const symbolBytes = new TextEncoder().encode(symbol);
-    
+
     const request = new Uint8Array(2 + hostBytes.length + 2 + symbolBytes.length);
     let offset = 0;
-    
+
     request[offset++] = 0x0a; // field 1, wire type 2
     request[offset++] = hostBytes.length;
     request.set(hostBytes, offset);
     offset += hostBytes.length;
-    
+
     request[offset++] = 0x22; // field 4, wire type 2
     request[offset++] = symbolBytes.length;
     request.set(symbolBytes, offset);
 
-    const responses = await this.sendGrpcWebRequest(url, request);
+    const responses = await sendGrpcWebRequest(url, request);
     if (!responses) return null;
 
     const descriptors = [];
     for (const resp of responses) {
-      descriptors.push(...(this.parseFileDescriptorResponse(resp) || []));
+      descriptors.push(...(parseFileDescriptorResponse(resp) || []));
     }
     return descriptors.length > 0 ? descriptors : null;
   }
 
+  /**
+   * 透過檔名取得 FileDescriptor
+   * @param {string} serverUrl
+   * @param {string} reflectionService
+   * @param {string} filename
+   * @returns {Promise<Uint8Array[] | null>}
+   */
   async getFileByFilename(serverUrl, reflectionService, filename) {
     const url = `${serverUrl}/${reflectionService}/ServerReflectionInfo`;
     const host = new URL(serverUrl).host;
 
-    // Encode: host = host (field 1), file_by_filename = filename (field 3)
     const hostBytes = new TextEncoder().encode(host);
     const filenameBytes = new TextEncoder().encode(filename);
-    
+
     const request = new Uint8Array(2 + hostBytes.length + 2 + filenameBytes.length);
     let offset = 0;
-    
+
     request[offset++] = 0x0a; // field 1, wire type 2
     request[offset++] = hostBytes.length;
     request.set(hostBytes, offset);
     offset += hostBytes.length;
-    
+
     request[offset++] = 0x1a; // field 3, wire type 2
     request[offset++] = filenameBytes.length;
     request.set(filenameBytes, offset);
 
-    const responses = await this.sendGrpcWebRequest(url, request);
+    const responses = await sendGrpcWebRequest(url, request);
     if (!responses) return null;
 
     const descriptors = [];
     for (const resp of responses) {
-      descriptors.push(...(this.parseFileDescriptorResponse(resp) || []));
+      descriptors.push(...(parseFileDescriptorResponse(resp) || []));
     }
     return descriptors.length > 0 ? descriptors : null;
-  }
-
-  async sendGrpcWebRequest(url, requestBody) {
-    // Frame the request
-    const frame = new Uint8Array(5 + requestBody.length);
-    frame[0] = 0; // not compressed
-    frame[1] = (requestBody.length >> 24) & 0xff;
-    frame[2] = (requestBody.length >> 16) & 0xff;
-    frame[3] = (requestBody.length >> 8) & 0xff;
-    frame[4] = requestBody.length & 0xff;
-    frame.set(requestBody, 5);
-
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/grpc-web+proto",
-        "Accept": "application/grpc-web+proto",
-        "X-Grpc-Web": "1",
-      },
-      body: frame,
-    });
-
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
-
-    const buffer = await response.arrayBuffer();
-    const data = new Uint8Array(buffer);
-
-    if (data.length < 5) return null;
-
-    // Unframe all messages (gRPC-Web can send multiple frames in one response)
-    const payloads = [];
-    let pos = 0;
-    while (pos + 5 <= data.length) {
-      const flags = data[pos];
-      const length = (data[pos + 1] << 24) | (data[pos + 2] << 16) | (data[pos + 3] << 8) | data[pos + 4];
-      const start = pos + 5;
-      const end = start + length;
-      
-      if (end > data.length) break;
-
-      // Bit 7: Compressed, Bit 1: Trailers
-      const isData = (flags & 0x80) === 0 && (flags & 0x01) === 0;
-      if (isData) {
-        payloads.push(data.slice(start, end));
-      }
-      pos = end;
-    }
-
-    // For reflection, we usually care about the aggregated data or the first valid response
-    // If it's multiple frames, they are usually separate ServerReflectionResponse messages
-    return payloads.length > 0 ? payloads : null;
-  }
-
-  parseListServicesResponse(data) {
-    const services = [];
-    let pos = 0;
-
-    while (pos < data.length) {
-      const [fieldNum, wireType, newPos] = this.readTag(data, pos);
-      pos = newPos;
-
-      if (wireType === 2) {
-        const [fieldData, nextPos] = this.readLengthDelimited(data, pos);
-        pos = nextPos;
-
-        if (fieldNum === 6) { // list_services_response
-          services.push(...this.parseListServicesResponseField(fieldData));
-        } else if (fieldNum === 7) { // error_response
-          this.logErrorResponse(fieldData);
-        }
-      } else {
-        pos = this.skipField(data, pos, wireType);
-      }
-    }
-
-    return services;
-  }
-
-  parseListServicesResponseField(data) {
-    const services = [];
-    let pos = 0;
-
-    while (pos < data.length) {
-      const [fieldNum, wireType, newPos] = this.readTag(data, pos);
-      pos = newPos;
-
-      if (wireType === 2) {
-        const [fieldData, nextPos] = this.readLengthDelimited(data, pos);
-        pos = nextPos;
-
-        if (fieldNum === 1) { // service
-          const name = this.parseServiceName(fieldData);
-          if (name) services.push(name);
-        }
-      } else {
-        pos = this.skipField(data, pos, wireType);
-      }
-    }
-
-    return services;
-  }
-
-  parseServiceName(data) {
-    let pos = 0;
-
-    while (pos < data.length) {
-      const [fieldNum, wireType, newPos] = this.readTag(data, pos);
-      pos = newPos;
-
-      if (wireType === 2) {
-        const [fieldData, nextPos] = this.readLengthDelimited(data, pos);
-        pos = nextPos;
-
-        if (fieldNum === 1) { // name
-          return new TextDecoder().decode(fieldData);
-        }
-      } else {
-        pos = this.skipField(data, pos, wireType);
-      }
-    }
-
-    return null;
-  }
-
-  parseFileDescriptorResponse(data) {
-    let pos = 0;
-
-    while (pos < data.length) {
-      const [fieldNum, wireType, newPos] = this.readTag(data, pos);
-      pos = newPos;
-
-      if (wireType === 2) {
-        const [fieldData, nextPos] = this.readLengthDelimited(data, pos);
-        pos = nextPos;
-
-        if (fieldNum === 4) { // file_descriptor_response
-          return this.parseFileDescriptorResponseField(fieldData);
-        } else if (fieldNum === 7) { // error_response
-          this.logErrorResponse(fieldData);
-        }
-      } else {
-        pos = this.skipField(data, pos, wireType);
-      }
-    }
-
-    return null;
-  }
-
-  parseFileDescriptorResponseField(data) {
-    const descriptors = [];
-    let pos = 0;
-
-    while (pos < data.length) {
-      const [fieldNum, wireType, newPos] = this.readTag(data, pos);
-      pos = newPos;
-
-      if (wireType === 2) {
-        const [fieldData, nextPos] = this.readLengthDelimited(data, pos);
-        pos = nextPos;
-
-        if (fieldNum === 1) { // file_descriptor_proto (bytes)
-          descriptors.push(fieldData);
-        }
-      } else {
-        pos = this.skipField(data, pos, wireType);
-      }
-    }
-
-    return descriptors.length > 0 ? descriptors : null;
-  }
-
-  parseFileDescriptor(descriptorBytes) {
-    try {
-      const result = {
-        services: [],
-        messages: {},
-      };
-
-      for (const bytes of descriptorBytes) {
-        const descriptor = this.bytesToDescriptor(bytes);
-        const parsed = this.parseFileDescriptorSingle(descriptor);
-        if (parsed) {
-          result.services.push(...(parsed.services || []));
-          Object.assign(result.messages, parsed.messages || {});
-        }
-      }
-
-      console.log("[Reflection] Parsed descriptor:", result);
-      return result;
-    } catch (e) {
-      console.warn("[Reflection] Failed to parse file descriptor:", e);
-      return null;
-    }
-  }
-
-  parseFileDescriptorSingle(descriptor) {
-    try {
-      const result = {
-        services: [],
-        messages: {},
-      };
-
-      const packageName = descriptor.package || "";
-
-      // Extract services
-      for (const svc of descriptor.service || []) {
-        const fullName = packageName ? `${packageName}.${svc.name}` : svc.name;
-        result.services.push({
-          name: svc.name,
-          fullName,
-          methods: (svc.method || []).map((m) => ({
-            name: m.name,
-            requestType: m.inputType?.replace(/^\./, "") || "",
-            responseType: m.outputType?.replace(/^\./, "") || "",
-          })),
-        });
-      }
-
-      // Extract messages and enums
-      const extractMessages = (messages, prefix) => {
-        for (const msg of messages || []) {
-          const fullName = prefix ? `${prefix}.${msg.name}` : msg.name;
-          result.messages[fullName] = {
-            name: msg.name,
-            fullName,
-            fields: (msg.field || []).map((f) => ({
-              name: f.name,
-              number: f.number,
-              type: f.type,
-              type_name: f.type_name?.replace(/^\./, "") || "",
-            })),
-          };
-
-          // Handle nested types
-          if (msg.nestedType && msg.nestedType.length > 0) {
-            extractMessages(msg.nestedType, fullName);
-          }
-          // Handle nested enums
-          if (msg.enumType && msg.enumType.length > 0) {
-            extractEnums(msg.enumType, fullName);
-          }
-        }
-      };
-
-      const extractEnums = (enums, prefix) => {
-        for (const e of enums || []) {
-          const fullName = prefix ? `${prefix}.${e.name}` : e.name;
-          result.messages[fullName] = {
-            name: e.name,
-            fullName,
-            isEnum: true,
-            values: (e.value || []).reduce((acc, v) => {
-              acc[v.number] = v.name;
-              return acc;
-            }, {}),
-          };
-        }
-      };
-
-      extractMessages(descriptor.messageType, packageName);
-      extractEnums(descriptor.enumType, packageName);
-
-      return result;
-    } catch (e) {
-      console.warn("[Reflection] Failed to parse single descriptor:", e);
-      return null;
-    }
-  }
-
-  bytesToDescriptor(bytes) {
-    // Parse FileDescriptorProto manually
-    const descriptor = {
-      name: "",
-      package: "",
-      dependency: [],
-      messageType: [],
-      service: [],
-    };
-
-    let pos = 0;
-    while (pos < bytes.length) {
-      const [fieldNum, wireType, newPos] = this.readTag(bytes, pos);
-      pos = newPos;
-
-      if (wireType === 2) {
-        const [fieldData, nextPos] = this.readLengthDelimited(bytes, pos);
-        pos = nextPos;
-
-        if (fieldNum === 1) { // name
-          descriptor.name = new TextDecoder().decode(fieldData);
-        } else if (fieldNum === 2) { // package
-          descriptor.package = new TextDecoder().decode(fieldData);
-        } else if (fieldNum === 3) { // dependency
-          descriptor.dependency.push(new TextDecoder().decode(fieldData));
-        } else if (fieldNum === 4) { // message_type
-          const msg = this.parseMessageType(fieldData);
-          if (msg) descriptor.messageType.push(msg);
-        } else if (fieldNum === 5) { // enum_type
-          const enm = this.parseEnumType(fieldData);
-          if (enm) (descriptor.enumType = descriptor.enumType || []).push(enm);
-        } else if (fieldNum === 6) { // service
-          const svc = this.parseServiceType(fieldData);
-          if (svc) descriptor.service.push(svc);
-        }
-      } else {
-        pos = this.skipField(bytes, pos, wireType);
-      }
-    }
-
-    return descriptor;
-  }
-
-  parseMessageType(data) {
-    const message = {
-      name: "",
-      field: [],
-      nestedType: [],
-    };
-
-    let pos = 0;
-    while (pos < data.length) {
-      const [fieldNum, wireType, newPos] = this.readTag(data, pos);
-      pos = newPos;
-
-      if (wireType === 2) {
-        const [fieldData, nextPos] = this.readLengthDelimited(data, pos);
-        pos = nextPos;
-
-        if (fieldNum === 1) { // name
-          message.name = new TextDecoder().decode(fieldData);
-        } else if (fieldNum === 2) { // field
-          const field = this.parseFieldDescriptor(fieldData);
-          if (field) message.field.push(field);
-        } else if (fieldNum === 3) { // nested_type
-          const nested = this.parseMessageType(fieldData);
-          if (nested) message.nestedType.push(nested);
-        } else if (fieldNum === 4) { // enum_type
-          const enm = this.parseEnumType(fieldData);
-          if (enm) (message.enumType = message.enumType || []).push(enm);
-        }
-      } else {
-        pos = this.skipField(data, pos, wireType);
-      }
-    }
-
-    return message;
-  }
-
-  parseEnumType(data) {
-    const enm = { name: "", value: [] };
-    let pos = 0;
-    while (pos < data.length) {
-      const [fieldNum, wireType, newPos] = this.readTag(data, pos);
-      pos = newPos;
-      if (wireType === 2) {
-        const [fieldData, nextPos] = this.readLengthDelimited(data, pos);
-        pos = nextPos;
-        if (fieldNum === 1) enm.name = new TextDecoder().decode(fieldData);
-        else if (fieldNum === 2) {
-          const val = this.parseEnumValue(fieldData);
-          if (val) enm.value.push(val);
-        }
-      } else pos = this.skipField(data, pos, wireType);
-    }
-    return enm;
-  }
-
-  parseEnumValue(data) {
-    const val = { name: "", number: 0 };
-    let pos = 0;
-    while (pos < data.length) {
-      const [fieldNum, wireType, newPos] = this.readTag(data, pos);
-      pos = newPos;
-      if (wireType === 2 && fieldNum === 1) {
-        const [fieldData, nextPos] = this.readLengthDelimited(data, pos);
-        pos = nextPos;
-        val.name = new TextDecoder().decode(fieldData);
-      } else if (wireType === 0 && fieldNum === 2) {
-        const [v, nextPos] = this.readVarint(data, pos);
-        pos = nextPos;
-        val.number = v;
-      } else pos = this.skipField(data, pos, wireType);
-    }
-    return val;
-  }
-
-  parseFieldDescriptor(data) {
-    const field = {
-      name: "",
-      number: 0,
-      type: 0,
-    };
-
-    let pos = 0;
-    while (pos < data.length) {
-      const [fieldNum, wireType, newPos] = this.readTag(data, pos);
-      pos = newPos;
-
-      if (wireType === 2) {
-        const [fieldData, nextPos] = this.readLengthDelimited(data, pos);
-        pos = nextPos;
-
-        if (fieldNum === 1) { // name
-          field.name = new TextDecoder().decode(fieldData);
-        } else if (fieldNum === 6) { // type_name
-          field.type_name = new TextDecoder().decode(fieldData);
-        }
-      } else if (wireType === 0) {
-        const [value, nextPos] = this.readVarint(data, pos);
-        pos = nextPos;
-
-        if (fieldNum === 3) { // number
-          field.number = value;
-        } else if (fieldNum === 5) { // type
-          field.type = value;
-        }
-      } else {
-        pos = this.skipField(data, pos, wireType);
-      }
-    }
-
-    return field;
-  }
-
-  parseServiceType(data) {
-    const service = {
-      name: "",
-      method: [],
-    };
-
-    let pos = 0;
-    while (pos < data.length) {
-      const [fieldNum, wireType, newPos] = this.readTag(data, pos);
-      pos = newPos;
-
-      if (wireType === 2) {
-        const [fieldData, nextPos] = this.readLengthDelimited(data, pos);
-        pos = nextPos;
-
-        if (fieldNum === 1) { // name
-          service.name = new TextDecoder().decode(fieldData);
-        } else if (fieldNum === 2) { // method
-          const method = this.parseMethodDescriptor(fieldData);
-          if (method) service.method.push(method);
-        }
-      } else {
-        pos = this.skipField(data, pos, wireType);
-      }
-    }
-
-    return service;
-  }
-
-  parseMethodDescriptor(data) {
-    const method = {
-      name: "",
-      inputType: "",
-      outputType: "",
-    };
-
-    let pos = 0;
-    while (pos < data.length) {
-      const [fieldNum, wireType, newPos] = this.readTag(data, pos);
-      pos = newPos;
-
-      if (wireType === 2) {
-        const [fieldData, nextPos] = this.readLengthDelimited(data, pos);
-        pos = nextPos;
-
-        if (fieldNum === 1) { // name
-          method.name = new TextDecoder().decode(fieldData);
-        } else if (fieldNum === 2) { // input_type
-          method.inputType = new TextDecoder().decode(fieldData);
-        } else if (fieldNum === 3) { // output_type
-          method.outputType = new TextDecoder().decode(fieldData);
-        }
-      } else {
-        pos = this.skipField(data, pos, wireType);
-      }
-    }
-
-    return method;
-  }
-
-  // Utility methods for protobuf parsing
-
-  readTag(data, pos) {
-    const [tag, newPos] = this.readVarint(data, pos);
-    return [tag >> 3, tag & 0x7, newPos];
-  }
-
-  readVarint(data, pos) {
-    let result = 0;
-    let shift = 0;
-
-    while (pos < data.length) {
-      const byte = data[pos++];
-      result |= (byte & 0x7f) << shift;
-      if ((byte & 0x80) === 0) break;
-      shift += 7;
-    }
-
-    return [result >>> 0, pos];
-  }
-
-  readLengthDelimited(data, pos) {
-    const [length, newPos] = this.readVarint(data, pos);
-    return [data.slice(newPos, newPos + length), newPos + length];
-  }
-
-  skipField(data, pos, wireType) {
-    if (wireType === 0) {
-      while (pos < data.length && (data[pos] & 0x80) !== 0) pos++;
-      return pos + 1;
-    } else if (wireType === 2) {
-      const [length, newPos] = this.readVarint(data, pos);
-      return newPos + length;
-    } else if (wireType === 5) {
-      return pos + 4;
-    } else if (wireType === 1) {
-      return pos + 8;
-    }
-    return pos;
-  }
-
-  logErrorResponse(data) {
-    let pos = 0;
-    let code = 0;
-    let msg = "";
-
-    while (pos < data.length) {
-      const [fieldNum, wireType, newPos] = this.readTag(data, pos);
-      pos = newPos;
-
-      if (wireType === 0 && fieldNum === 1) { // error_code
-        const [v, nextPos] = this.readVarint(data, pos);
-        pos = nextPos;
-        code = v;
-      } else if (wireType === 2 && fieldNum === 2) { // error_message
-        const [fieldData, nextPos] = this.readLengthDelimited(data, pos);
-        pos = nextPos;
-        msg = new TextDecoder().decode(fieldData);
-      } else {
-        pos = this.skipField(data, pos, wireType);
-      }
-    }
-
-    console.warn(`[Reflection] Server returned error (${code}): ${msg}`);
   }
 }
 
-const reflectionClient = new ReflectionClient();
-export default reflectionClient;
+export default new ReflectionClient();

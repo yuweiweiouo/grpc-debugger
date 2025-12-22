@@ -1,6 +1,6 @@
 /* global chrome */
 /**
- * gRPC Debugger 2.0 - Content Script
+ * gRPC Debugger 1.0 - Content Script
  * Relays messages from the page to the background script.
  */
 
