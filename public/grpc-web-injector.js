@@ -5,7 +5,14 @@
  */
 
 (function() {
-  const VERSION = "v2.16";
+  // v2.23: 防止重複注入
+  if (window.__GRPC_WEB_INJECTOR_INJECTED__) {
+    console.log('[gRPC Debugger] Injector already active, skipping.');
+    return;
+  }
+  window.__GRPC_WEB_INJECTOR_INJECTED__ = true;
+  
+  const VERSION = "v2.23";
   const postType = "__GRPCWEB_DEVTOOLS__";
   console.log(`%c[gRPC Debugger ${VERSION}] Injector Active`, "color: #8b5cf6; font-weight: bold;");
 

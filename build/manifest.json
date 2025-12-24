@@ -1,8 +1,8 @@
 {
   "name": "gRPC Debugger",
-  "version": "1.3.4",
+  "version": "1.4.2",
   "manifest_version": 3,
-  "description": "Powerful gRPC and Connect-RPC debugging (Stable v2.16). gRPC-Web network debugger with automatic request interception and protobuf decoding. Enhanced time precision and timestamps.",
+  "description": "Powerful gRPC and Connect-RPC debugging (Stable v2.24). No duplicate entries, FIFO matching, protobuf decoding.",
   "author": "魚尾尾",
   "icons": {
     "16": "launchericon-48-48.png",

@@ -85,20 +85,15 @@ export async function addLog(entry) {
   
   // 合併與更新邏輯 (Prevent Duplicates)
   log.update(list => {
-    // 優先使用精確 ID 匹配 (由攔截器或 HAR 產生)
-    let existingIdx = list.findIndex(e => e.id === entry.id);
+    // v2.23: 只使用精確 ID 匹配
+    const existingIdx = list.findIndex(e => e.id === entry.id);
     
-    // 若 ID 不存在，嘗試模糊匹配 (處理跨來源但內容相同的請求)
-    if (existingIdx === -1) {
-      existingIdx = list.findIndex(e => 
-        e.method === entry.method && 
-        Math.abs(e.startTime - entry.startTime) < 1.5 &&
-        e.status === 'pending'
-      );
-    }
+    // 診斷日誌
+    console.log(`[gRPC Debugger] addLog: id=${entry.id}, status=${entry.status}, existingIdx=${existingIdx}, listSize=${list.length}`);
 
     if (existingIdx !== -1) {
       const newList = [...list];
+      console.log(`[gRPC Debugger] Merging entry: ${entry.id} (${newList[existingIdx].status} -> ${entry.status})`);
       // 合併數據：保留已有的攔截數據，並補全剩餘資訊
       newList[existingIdx] = { 
         ...newList[existingIdx], 
@@ -109,6 +104,7 @@ export async function addLog(entry) {
       };
       return newList;
     }
+    console.log(`[gRPC Debugger] New entry: ${entry.id}`);
     return [...list, entry];
   });
 

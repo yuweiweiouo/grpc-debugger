@@ -1,7 +1,7 @@
 <script>
   /**
    * gRPC Playground - 請求測試介面
-   * 
+   *
    * 類似 grpcui 的功能，讓使用者可以：
    * 1. 選擇已載入的服務和方法
    * 2. 輸入 JSON 格式的請求內容
@@ -11,13 +11,21 @@
   import { protoEngine } from "../lib/proto-engine";
   import { t } from "../lib/i18n";
   import { sendGrpcWebRequest } from "../lib/grpc-web-transport";
-  import { Play, AlertCircle, CheckCircle2, Pencil, Check } from "lucide-svelte";
+  import {
+    Play,
+    AlertCircle,
+    CheckCircle2,
+    Pencil,
+    Check,
+  } from "lucide-svelte";
 
   let selectedService = null;
   let selectedMethod = null;
   let baseUrl = "";
   let requestBody = "{}";
+  let requestHeaders = "{}";
   let response = null;
+  let responseHeaders = null;
   let error = null;
   let isLoading = false;
   let isEditingUrl = false;
@@ -30,8 +38,21 @@
 
   $: availableMethods = selectedService?.methods || [];
 
-  $: if (selectedService && !availableMethods.find(m => m.name === selectedMethod?.name)) {
+  $: if (
+    selectedService &&
+    !availableMethods.find((m) => m.name === selectedMethod?.name)
+  ) {
     selectedMethod = null;
+  }
+
+  // 當選擇方法時，自動填入請求模板 (grpcui 風格)
+  $: if (selectedMethod) {
+    const template = protoEngine?.getMessageTemplate(
+      selectedMethod.requestType,
+    );
+    if (template) {
+      requestBody = formatJson(template);
+    }
   }
 
   function toggleEditUrl() {
@@ -49,7 +70,7 @@
       const serviceName = selectedService.fullName;
       const methodName = selectedMethod.name;
       const methodPath = `/${serviceName}/${methodName}`;
-      const fullUrl = baseUrl.replace(/\/$/, '') + methodPath;
+      const fullUrl = baseUrl.replace(/\/$/, "") + methodPath;
 
       const methodInfo = protoEngine?.findMethod(methodPath);
       if (!methodInfo) {
@@ -57,16 +78,25 @@
       }
 
       const requestJson = JSON.parse(requestBody);
-      const requestBytes = protoEngine?.encodeMessage(methodInfo.requestType, requestJson);
-      
+      const customHeaders = JSON.parse(requestHeaders);
+      const requestBytes = protoEngine?.encodeMessage(
+        methodInfo.requestType,
+        requestJson,
+      );
+
       if (!requestBytes) {
         throw new Error(`無法編碼請求: ${methodInfo.requestType}`);
       }
 
-      const responseFrames = await sendGrpcWebRequest(fullUrl, requestBytes);
-      
+      const { data: responseFrames, headers: resHeaders } =
+        await sendGrpcWebRequest(fullUrl, requestBytes, customHeaders);
+      responseHeaders = resHeaders;
+
       if (responseFrames && responseFrames.length > 0) {
-        const decoded = protoEngine?.decodeMessage(methodInfo.responseType, responseFrames[0]);
+        const decoded = protoEngine?.decodeMessage(
+          methodInfo.responseType,
+          responseFrames[0],
+        );
         response = decoded;
       } else {
         response = { _info: "空回應" };
@@ -80,11 +110,15 @@
 
   function formatJson(obj) {
     try {
-      return JSON.stringify(obj, (key, value) => {
-        if (key === "$typeName") return undefined;
-        if (typeof value === "bigint") return value.toString();
-        return value;
-      }, 2);
+      return JSON.stringify(
+        obj,
+        (key, value) => {
+          if (key === "$typeName") return undefined;
+          if (typeof value === "bigint") return value.toString();
+          return value;
+        },
+        2,
+      );
     } catch (e) {
       return String(obj);
     }
@@ -94,39 +128,41 @@
 <div class="playground-page">
   <div class="playground-content">
     <div class="form-section">
-      <div class="form-row url-row">
-        <label>{$t("enter_base_url")}</label>
-        <div class="url-input-wrapper">
-          <input 
-            type="text" 
-            bind:value={baseUrl} 
-            placeholder="https://your-server.com"
-            readonly={!isEditingUrl}
-            class:readonly={!isEditingUrl}
-          />
-          <button 
-            class="edit-btn" 
-            class:active={isEditingUrl}
-            on:click={toggleEditUrl}
-            title={isEditingUrl ? $t("lock_url") : $t("edit_url")}
-          >
-            {#if isEditingUrl}
-              <Check size={14} />
-            {:else}
-              <Pencil size={14} />
-            {/if}
-          </button>
+      <div class="form-grid">
+        <div class="form-row">
+          <label>{$t("enter_base_url")}</label>
+          <div class="url-input-wrapper">
+            <input
+              type="text"
+              bind:value={baseUrl}
+              placeholder="https://your-server.com"
+              readonly={!isEditingUrl}
+              class:readonly={!isEditingUrl}
+            />
+            <button
+              class="edit-btn"
+              class:active={isEditingUrl}
+              on:click={toggleEditUrl}
+              title={isEditingUrl ? $t("lock_url") : $t("edit_url")}
+            >
+              {#if isEditingUrl}
+                <Check size={14} />
+              {:else}
+                <Pencil size={14} />
+              {/if}
+            </button>
+          </div>
         </div>
-      </div>
 
-      <div class="form-row">
-        <label>{$t("select_service")}</label>
-        <select bind:value={selectedService}>
-          <option value={null}>-- {$t("select_service")} --</option>
-          {#each $services as svc}
-            <option value={svc}>{svc.fullName}</option>
-          {/each}
-        </select>
+        <div class="form-row">
+          <label>{$t("select_service")}</label>
+          <select bind:value={selectedService}>
+            <option value={null}>-- {$t("select_service")} --</option>
+            {#each $services as svc}
+              <option value={svc}>{svc.fullName}</option>
+            {/each}
+          </select>
+        </div>
       </div>
 
       <div class="form-row">
@@ -140,16 +176,26 @@
       </div>
 
       <div class="form-row">
+        <label>Request Headers (JSON)</label>
+        <textarea
+          bind:value={requestHeaders}
+          placeholder={`Enter JSON headers, e.g. {"authorization": "Bearer ..."}`}
+          rows="2"
+          class="headers-textarea"
+        ></textarea>
+      </div>
+
+      <div class="form-row">
         <label>{$t("request_body")}</label>
-        <textarea 
-          bind:value={requestBody} 
+        <textarea
+          bind:value={requestBody}
           placeholder="Enter JSON request body"
           rows="8"
         ></textarea>
       </div>
 
-      <button 
-        class="send-btn" 
+      <button
+        class="send-btn"
         on:click={sendRequest}
         disabled={!selectedService || !selectedMethod || !baseUrl || isLoading}
       >
@@ -164,7 +210,7 @@
 
     <div class="response-section">
       <h3>{$t("response_body")}</h3>
-      
+
       {#if error}
         <div class="error-box">
           <AlertCircle size={16} />
@@ -175,11 +221,20 @@
           <CheckCircle2 size={14} />
           <span>Success</span>
         </div>
-        <pre class="response-json">{formatJson(response)}</pre>
-      {:else}
-        <div class="empty-response">
-          選擇服務和方法後點擊發送
+
+        <div class="res-block">
+          <h4>{$t("response_body")}</h4>
+          <pre class="response-json">{formatJson(response)}</pre>
         </div>
+
+        {#if responseHeaders}
+          <div class="res-block">
+            <h4>Response Headers</h4>
+            <pre class="response-json small">{formatJson(responseHeaders)}</pre>
+          </div>
+        {/if}
+      {:else}
+        <div class="empty-response">選擇服務和方法後點擊發送</div>
       {/if}
     </div>
   </div>
@@ -193,8 +248,6 @@
     background: #f9fafb;
   }
 
-
-
   .playground-content {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -202,15 +255,25 @@
     max-width: 1200px;
   }
 
-  .form-section, .response-section {
+  .form-section,
+  .response-section {
     background: white;
     border: 1px solid #e5e7eb;
     border-radius: 12px;
     padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .form-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
   }
 
   .form-row {
-    margin-bottom: 16px;
+    margin: 0;
   }
 
   .url-input-wrapper {
@@ -263,7 +326,9 @@
     margin-bottom: 6px;
   }
 
-  input, select, textarea {
+  input,
+  select,
+  textarea {
     width: 100%;
     padding: 10px 12px;
     border: 1px solid #d1d5db;
@@ -274,7 +339,9 @@
     box-sizing: border-box;
   }
 
-  input:focus, select:focus, textarea:focus {
+  input:focus,
+  select:focus,
+  textarea:focus {
     outline: none;
     border-color: #2563eb;
     box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
@@ -283,6 +350,12 @@
   textarea {
     font-family: monospace;
     resize: vertical;
+  }
+
+  .headers-textarea {
+    font-size: 11px;
+    padding: 8px;
+    min-height: 50px;
   }
 
   select:disabled {
@@ -317,10 +390,21 @@
   }
 
   h3 {
-    margin: 0 0 16px 0;
+    margin: 0;
     font-size: 14px;
     font-weight: 600;
     color: #374151;
+  }
+
+  h4 {
+    margin: 0 0 8px 0;
+    font-size: 12px;
+    font-weight: 600;
+    color: #4b5563;
+  }
+
+  .res-block {
+    margin-bottom: 16px;
   }
 
   .error-box {
@@ -356,6 +440,11 @@
     overflow-x: auto;
     white-space: pre-wrap;
     word-break: break-word;
+  }
+
+  .response-json.small {
+    font-size: 10px;
+    padding: 10px;
   }
 
   .empty-response {

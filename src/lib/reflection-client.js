@@ -236,18 +236,51 @@ class ReflectionClient {
    * Debugger 的 UI 層有些部分仍依賴舊式的 fullName 與 fields 陣列結構。
    */
   _descMessageToLegacy(desc) {
-    return {
-      name: desc.name,
-      fullName: desc.typeName,
-      fields: desc.fields.map(f => ({
+    const legacyFields = desc.fields.map(f => {
+      const typeName = this._extractTypeName(f);
+      return {
         name: f.name,
         number: f.number,
         type: this._fieldKindToType(f),
-        label: f.repeated ? 3 : f.proto.label || 1, // 3 代表 REPEATED, 1 代表 OPTIONAL/REQUIRED
-        type_name: f.message?.typeName || f.enum?.typeName || '',
-      })),
-      _desc: desc, // 將原始描述符塞入隠藏欄位，供 Engine 調用官方 decode 邏輯
+        kind: f.kind,
+        repeated: f.repeated,
+        label: f.repeated ? 3 : f.proto?.label || 1,
+        type_name: typeName,
+      };
+    });
+    
+    return {
+      name: desc.name,
+      fullName: desc.typeName,
+      fields: legacyFields,
+      _desc: desc,
     };
+  }
+
+  /**
+   * 提取欄位的類型名稱
+   * v2.17: 處理更多 @bufbuild/protobuf 的欄位結構
+   */
+  _extractTypeName(f) {
+    // 最優先：直接訪問 message/enum 的 typeName
+    if (f.message?.typeName) return f.message.typeName;
+    if (f.enum?.typeName) return f.enum.typeName;
+    
+    // Buf v2 格式：使用 T 屬性
+    if (f.T?.typeName) return f.T.typeName;
+    
+    // Map 類型：提取 value 的 typeName
+    if (f.kind === 'map' && f.mapValue) {
+      if (f.mapValue.message?.typeName) return f.mapValue.message.typeName;
+      if (f.mapValue.enum?.typeName) return f.mapValue.enum.typeName;
+    }
+    
+    // 從 proto 原始資料中提取
+    if (f.proto?.typeName) {
+      return f.proto.typeName.replace(/^\./, '');
+    }
+    
+    return '';
   }
 
   /**
@@ -338,7 +371,7 @@ class ReflectionClient {
     request[offset++] = 0x3a; // field 7, wire type 2
     request[offset++] = 0x00; // length 0 (表示空的 list_services 操作)
 
-    const responses = await sendGrpcWebRequest(url, request);
+    const { data: responses } = await sendGrpcWebRequest(url, request);
     if (!responses) return null;
 
     const services = [];
@@ -370,7 +403,7 @@ class ReflectionClient {
     request[offset++] = symbolBytes.length;
     request.set(symbolBytes, offset);
 
-    const responses = await sendGrpcWebRequest(url, request);
+    const { data: responses } = await sendGrpcWebRequest(url, request);
     if (!responses) return null;
 
     const descriptors = [];
@@ -402,7 +435,7 @@ class ReflectionClient {
     request[offset++] = filenameBytes.length;
     request.set(filenameBytes, offset);
 
-    const responses = await sendGrpcWebRequest(url, request);
+    const { data: responses } = await sendGrpcWebRequest(url, request);
     if (!responses) return null;
 
     const descriptors = [];
