@@ -46,9 +46,13 @@ export async function waitForReflection(origin) {
  * 2. 併發保護：對同一個 Origin 只會啟動一個反射任務，其餘調用者會自動進入隊列等待結果。
  */
 export async function tryAutoReflection(url) {
-  if (!url) return false;
+  if (!url || typeof url !== 'string') return false;
   
   try {
+    // 防禦：忽略無法解析為完整 URL 的相對路徑
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      return false;
+    }
     const origin = new URL(url).origin;
     
     // 策略 1：本地搶佔檢測

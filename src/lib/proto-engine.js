@@ -151,7 +151,7 @@ class ProtoEngine {
    * 這是解碼二進位數據的前提。
    * 
    * @param {string} typeName 完整的類型名稱 (例如 "google.protobuf.Any")
-   * @returns {object | null} 返回 DescMessage 或舊版定義物件
+   * @returns {object | null} 返回 legacy 格式的物件（包含 fields 陣列）
    */
   findMessage(typeName) {
     if (!typeName) return null;
@@ -159,25 +159,116 @@ class ProtoEngine {
     // 移除開頭的點（這是 Protobuf 名稱系統的標準化步驟）
     const cleanName = typeName.replace(/^\.+/, '');
     
+    let desc = null;
+    
     // 優先從官方 Registry 中獲取，這是最準確的來源
     if (this.registry) {
-      const desc = this.registry.getMessage(cleanName);
-      if (desc) return desc;
+      desc = this.registry.getMessage(cleanName);
     }
     
     // 備援方案：從緩存的 schemas Map 中尋找
-    if (this.schemas.has(cleanName)) {
-      return this.schemas.get(cleanName);
+    if (!desc && this.schemas.has(cleanName)) {
+      desc = this.schemas.get(cleanName);
     }
     
     // 後綴匹配備援（處理部分導入類型的命名差異）
-    for (const [key, msg] of this.schemas) {
-      if (key.endsWith(`.${cleanName}`) || key === cleanName) {
-        return msg;
+    if (!desc) {
+      for (const [key, msg] of this.schemas) {
+        if (key.endsWith(`.${cleanName}`) || key === cleanName) {
+          desc = msg;
+          break;
+        }
       }
     }
     
-    return null;
+    if (!desc) return null;
+    
+    // 如果是 @bufbuild/protobuf 的 DescMessage，轉換為 legacy 格式
+    if (desc.kind === 'message' && Array.isArray(desc.fields)) {
+      return this._toLegacyFormat(desc);
+    }
+    
+    // 已經是 legacy 格式或其他格式，直接返回
+    return desc;
+  }
+
+  /**
+   * 將 @bufbuild/protobuf 的 DescMessage 轉換為 UI 使用的 legacy 格式
+   * @param {object} desc DescMessage
+   * @returns {object} legacy 格式物件
+   */
+  _toLegacyFormat(desc) {
+    const legacyFields = desc.fields.map(f => {
+      const typeName = this._extractFieldTypeName(f);
+      return {
+        name: f.name,
+        number: f.number,
+        type: this._fieldKindToType(f),
+        kind: f.kind,
+        repeated: f.repeated,
+        label: f.repeated ? 3 : (f.proto?.label || 1),
+        type_name: typeName,
+        // 保留原始欄位以便深層查詢
+        _original: f
+      };
+    });
+    
+    return {
+      name: desc.name,
+      fullName: desc.typeName,
+      fields: legacyFields,
+      _desc: desc,
+    };
+  }
+
+  /**
+   * 從欄位描述符提取類型名稱
+   * @param {object} f 欄位描述符
+   * @returns {string} 類型名稱
+   */
+  _extractFieldTypeName(f) {
+    // @bufbuild/protobuf v2: message/enum 欄位
+    if (f.message?.typeName) return f.message.typeName;
+    if (f.enum?.typeName) return f.enum.typeName;
+    
+    // Map 類型
+    if (f.kind === 'map' && f.mapValue) {
+      if (f.mapValue.message?.typeName) return f.mapValue.message.typeName;
+      if (f.mapValue.enum?.typeName) return f.mapValue.enum.typeName;
+    }
+    
+    // 從 proto 原始資料中提取
+    if (f.proto?.typeName) {
+      return f.proto.typeName.replace(/^\./, '');
+    }
+    
+    return '';
+  }
+
+  /**
+   * 將欄位 kind 轉換為 Protobuf 類型數字
+   */
+  _fieldKindToType(f) {
+    // 優先從 proto 原始資料中提取
+    if (f.proto && typeof f.proto.type === 'number') {
+      return f.proto.type;
+    }
+    
+    // 根據 kind 推斷
+    const kindMap = {
+      'message': 11,
+      'enum': 14,
+      'map': 11,
+    };
+    
+    if (kindMap[f.kind]) return kindMap[f.kind];
+    
+    // scalar 類型
+    if (f.kind === 'scalar' && typeof f.scalar === 'number') {
+      return f.scalar;
+    }
+    
+    return 9; // 預設 string
   }
 
   /**
@@ -208,6 +299,34 @@ class ProtoEngine {
       return toBinary(descMessage, message);
     } catch (e) {
       console.error(`[ProtoEngine] 編碼失敗:`, e);
+      return null;
+    }
+  }
+
+  /**
+   * 獲取訊息類型的 JSON 模板 (用於 Playground)
+   * 
+   * @param {string} typeName 訊息類型名稱
+   * @returns {object | null} 訊息的初始 JSON 結構
+   */
+  getMessageTemplate(typeName) {
+    if (!typeName) return null;
+
+    const schema = this.findMessage(typeName);
+    const descMessage = schema?.kind === 'message' ? schema : schema?._desc;
+
+    if (!descMessage) {
+      console.error(`[ProtoEngine] 找不到 Template 用的 Schema: ${typeName}`);
+      return null;
+    }
+
+    try {
+      // 建立預設訊息物件
+      const message = create(descMessage);
+      // 轉換為純 JS 物件
+      return this._messageToObject(message, descMessage);
+    } catch (e) {
+      console.error(`[ProtoEngine] 產生模板失敗:`, e);
       return null;
     }
   }

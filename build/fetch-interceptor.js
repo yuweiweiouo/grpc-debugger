@@ -1,9 +1,16 @@
 /**
- * gRPC Debugger - Robust Interceptor v2.3 (Ironclad)
+ * gRPC Debugger - Robust Interceptor v2.23 (Ironclad)
  * 攔截 fetch 與 XHR 請求，包含版本化日誌與同步 XHR 支援
  */
 (function() {
-  const VERSION = "v2.16";
+  // v2.23: 防止重複注入
+  if (window.__GRPC_DEBUGGER_INTERCEPTOR_INJECTED__) {
+    console.log('[gRPC Debugger] Interceptor already injected, skipping.');
+    return;
+  }
+  window.__GRPC_DEBUGGER_INTERCEPTOR_INJECTED__ = true;
+  
+  const VERSION = "v2.23";
   const GRPC_CONTENT_TYPES = ['grpc', 'connect'];
   
   /**
@@ -27,6 +34,18 @@
   }
 
   /**
+   * 將 URL 轉為完整格式 (含 protocol + host)
+   * v2.17: 確保傳送完整 URL 給 DevTools
+   */
+  function toFullUrl(url) {
+    try {
+      return new URL(url, window.location.href).href;
+    } catch {
+      return url;
+    }
+  }
+
+  /**
    * 高效將 ArrayBuffer/Uint8Array 轉為 Base64
    */
   function arrayBufferToBase64(buffer) {
@@ -37,6 +56,64 @@
       binary += String.fromCharCode(bytes[i]);
     }
     return btoa(binary);
+  }
+
+  /**
+   * 快速計算請求的雜湊值 (FNV-1a)
+   * v2.22: 將 path + headers + body 一起 hash，避免 body 為空時無法區分
+   * @param {string} path - URL 路徑
+   * @param {string} headersStr - 序列化的 headers
+   * @param {ArrayBuffer} bodyBuffer - request body
+   * @returns {string} 8 字元 hex hash
+   */
+  function computeRequestHash(path, headersStr, bodyBuffer) {
+    // FNV-1a 32-bit hash
+    let hash = 2166136261;
+    
+    // Hash path
+    for (let i = 0; i < path.length; i++) {
+      hash ^= path.charCodeAt(i);
+      hash = (hash * 16777619) >>> 0;
+    }
+    
+    // Hash headers
+    for (let i = 0; i < headersStr.length; i++) {
+      hash ^= headersStr.charCodeAt(i);
+      hash = (hash * 16777619) >>> 0;
+    }
+    
+    // Hash body
+    if (bodyBuffer) {
+      const bytes = new Uint8Array(bodyBuffer);
+      for (let i = 0; i < bytes.length; i++) {
+        hash ^= bytes[i];
+        hash = (hash * 16777619) >>> 0;
+      }
+    }
+    
+    return hash.toString(16).padStart(8, '0');
+  }
+
+  /**
+   * 將 headers 物件轉為排序後的字串
+   */
+  function serializeHeaders(headers) {
+    if (!headers) return '';
+    try {
+      let pairs = [];
+      if (typeof headers.entries === 'function') {
+        for (const [k, v] of headers.entries()) {
+          pairs.push(`${k.toLowerCase()}:${v}`);
+        }
+      } else if (typeof headers === 'object') {
+        for (const k of Object.keys(headers)) {
+          pairs.push(`${k.toLowerCase()}:${headers[k]}`);
+        }
+      }
+      return pairs.sort().join('|');
+    } catch {
+      return '';
+    }
   }
   
   /**
@@ -103,16 +180,21 @@
         }
 
         if (bodyBuffer && bodyBuffer.byteLength > 0) {
-          // v2.9 Ghost Sync: 直接發送數據，不注入 Header
+          // v2.22: 傳送完整 URL、fuzzy path 與 requestHash (path + headers + body)
+          const fullUrl = toFullUrl(rawUrl);
+          const headersStr = serializeHeaders(options.headers);
+          const requestHash = computeRequestHash(fuzzyUrl, headersStr, bodyBuffer);
           window.postMessage({
             type: '__GRPCWEB_DEVTOOLS__',
             action: 'capturedRequestBody',
-            url: fuzzyUrl,
+            url: fullUrl,
+            path: fuzzyUrl,
+            requestHash,
             bodyBase64: arrayBufferToBase64(bodyBuffer),
             timestamp: Date.now(),
             _v: VERSION
           }, '*');
-          console.log(`%c[gRPC Debugger ${VERSION}] 👻 Ghost Intercepted (Fetch): ${fuzzyUrl}`, "color: #d946ef; font-weight: bold;");
+          console.log(`%c[gRPC Debugger ${VERSION}] 👻 Ghost Intercepted (Fetch): ${fuzzyUrl} [Hash: ${requestHash}]`, "color: #d946ef; font-weight: bold;");
         }
       } catch (e) {}
     }
@@ -126,6 +208,7 @@
   const originalSetHeader = XHR.prototype.setRequestHeader;
 
   XHR.prototype.open = function(method, url) {
+    this._rawUrl = url;
     this._url = normalizeUrlFuzzy(url);
     this._headers = {};
     return originalOpen.apply(this, arguments);
@@ -137,20 +220,28 @@
   };
 
   XHR.prototype.send = function(body) {
+    const rawXhrUrl = this._rawUrl;
+    const fuzzyXhrUrl = this._url;
+    
     if (isGrpcRequest(this._headers['content-type']) && body) {
       try {
         const bodyBuffer = extractBodySync(body);
         if (bodyBuffer && bodyBuffer.byteLength > 0) {
-          // v2.9 Ghost Sync: 不注入 Header
+          // v2.22: 傳送完整 URL、fuzzy path 與 requestHash (path + headers + body)
+          const fullUrl = toFullUrl(rawXhrUrl);
+          const headersStr = serializeHeaders(this._headers);
+          const requestHash = computeRequestHash(fuzzyXhrUrl, headersStr, bodyBuffer);
           window.postMessage({
             type: '__GRPCWEB_DEVTOOLS__',
             action: 'capturedRequestBody',
-            url: this._url,
+            url: fullUrl,
+            path: fuzzyXhrUrl,
+            requestHash,
             bodyBase64: arrayBufferToBase64(bodyBuffer),
             timestamp: Date.now(),
             _v: VERSION
           }, '*');
-          console.log(`%c[gRPC Debugger ${VERSION}] 👻 Ghost Intercepted (XHR): ${this._url}`, "color: #d946ef; font-weight: bold;");
+          console.log(`%c[gRPC Debugger ${VERSION}] 👻 Ghost Intercepted (XHR): ${fuzzyXhrUrl} [Hash: ${requestHash}]`, "color: #d946ef; font-weight: bold;");
         }
       } catch (e) {}
     }

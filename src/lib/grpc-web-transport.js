@@ -88,9 +88,10 @@ export function unframeResponse(data) {
  * 
  * @param {string} url 請求的端點 URL
  * @param {Uint8Array} requestBody 尚未封裝的請求內容
- * @returns {Promise<Uint8Array[] | null>} 解析後的 Data Frames 列表
+ * @param {Object} customHeaders 自定義請求標頭 (Metadata)
+ * @returns {Promise<{data: Uint8Array[] | null, headers: Object}>} 解析後的 Data Frames 列表與回應標頭
  */
-export async function sendGrpcWebRequest(url, requestBody) {
+export async function sendGrpcWebRequest(url, requestBody, customHeaders = {}) {
   // 將內容封裝入 gRPC-Web Frame
   const frame = frameRequest(requestBody);
 
@@ -100,6 +101,7 @@ export async function sendGrpcWebRequest(url, requestBody) {
       'Content-Type': 'application/grpc-web+proto', // 宣告為 gRPC-Web Protobuf 格式
       'Accept': 'application/grpc-web+proto',
       'X-Grpc-Web': '1',                            // 特定標頭，指示這是一個 gRPC-Web 請求
+      ...customHeaders,
     },
     body: frame,
   });
@@ -108,11 +110,20 @@ export async function sendGrpcWebRequest(url, requestBody) {
     throw new Error(`HTTP 傳輸錯誤 ${response.status}: ${response.statusText}`);
   }
 
+  // 將回應標頭轉換為簡單物件
+  const responseHeaders = {};
+  response.headers.forEach((value, key) => {
+    responseHeaders[key] = value;
+  });
+
   // 讀取回應內容為 ArrayBuffer 並轉為 Uint8Array
   const buffer = await response.arrayBuffer();
   const data = new Uint8Array(buffer);
 
   // 解析回應中的 Frames 並傳回 Data 內容
-  return unframeResponse(data);
+  return {
+    data: unframeResponse(data),
+    headers: responseHeaders,
+  };
 }
 

@@ -1,7 +1,7 @@
 <script>
   /**
    * 服務列表首頁 (Services View)
-   * 
+   *
    * 職責：
    * 1. 顯示目前 Debugger 載入的所有 gRPC 服務。
    * 2. 支援過濾功能。
@@ -15,7 +15,6 @@
   } from "../stores/schema";
   import { t } from "../lib/i18n";
   import {
-    Trash2,
     ShieldCheck,
     Box,
     RefreshCw,
@@ -24,12 +23,6 @@
     Eye,
     EyeOff,
   } from "lucide-svelte";
-
-  function handleClear() {
-    if (confirm("Clear all loaded schemas?")) {
-      clearAllSchemas();
-    }
-  }
 </script>
 
 <div class="services-page">
@@ -55,10 +48,6 @@
         </div>
       {/if}
     </div>
-    <button class="clear-btn" on:click={handleClear}>
-      <Trash2 size={16} />
-      <span>{$t("clear_all")}</span>
-    </button>
   </header>
 
   <div class="service-grid">
@@ -166,26 +155,6 @@
 
   :global(.spin) {
     animation: spin 2s linear infinite;
-  }
-
-  .clear-btn {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    background: white;
-    border: 1px solid #e5e7eb;
-    padding: 8px 16px;
-    border-radius: 8px;
-    color: #ef4444;
-    font-size: 13px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-
-  .clear-btn:hover {
-    background: #fef2f2;
-    border-color: #fca5a5;
   }
 
   .service-grid {
