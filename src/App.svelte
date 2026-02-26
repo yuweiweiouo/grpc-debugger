@@ -31,8 +31,35 @@
           addLog(data);
         };
 
-        // 監聯來自 content-script/background 的 schema 註冊訊息
+        // 監聯來自 content-script/background 的訊息
         chrome.runtime.onMessage.addListener((message) => {
+          // Interceptor 已解碼模式：前端 interceptor 直接送入已序列化為 JSON 的 call data
+          if (
+            message.type === "__GRPCWEB_DEVTOOLS__" &&
+            message.action === "gRPCNetworkCall"
+          ) {
+            const method = message.method?.startsWith("/")
+              ? message.method
+              : `/${message.method || ""}`;
+            const parts = method.split("/");
+            const endpoint = parts.pop() || parts.pop();
+
+            addLog({
+              id: `interceptor-${message.timestamp || Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+              method,
+              endpoint,
+              methodType: message.methodType || "unary",
+              request: message.request,
+              response: message.error ? { _error: message.error.message || String(message.error), _code: message.error.code } : message.response,
+              error: message.error,
+              status: "finished",
+              startTime: (message.timestamp || Date.now()) / 1000,
+              _source: "interceptor",
+            });
+            return;
+          }
+
+          // Schema 註冊：從 grpc-web-injector 或其他來源
           if (
             message.type === "__GRPCWEB_DEVTOOLS__" &&
             message.action === "registerSchema"

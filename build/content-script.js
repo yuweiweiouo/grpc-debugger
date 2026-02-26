@@ -26,7 +26,6 @@ if (window.__GRPC_DEBUGGER_CONTENT_SCRIPT_INJECTED__) {
 window.addEventListener("message", (event) => {
   if (event.source !== window) return;
   if (event.data && event.data.type === "__GRPCWEB_DEVTOOLS__") {
-    // Port to background is already connected in background.js via onConnect
     chrome.runtime.sendMessage(event.data);
   }
 });
