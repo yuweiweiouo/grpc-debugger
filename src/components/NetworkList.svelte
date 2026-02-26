@@ -1,7 +1,7 @@
 <script>
   /**
    * 網路請求列表組件 (Network List)
-   * 
+   *
    * 職責：
    * 1. 條列式顯示所有經過過濾的 gRPC 請求。
    * 2. 透過顏色小點 (Dot) 反映請求的即時狀態 (Pending, Success, Error)。
@@ -74,6 +74,13 @@
           class:error={entry.status === "finished" && entry.grpcStatus > 0}
           class:pending={entry.status === "pending"}
         ></span>
+
+        {#if entry._source === "interceptor"}
+          <span class="source-tag source-p" title="PostMessage">P</span>
+        {:else}
+          <span class="source-tag source-r" title="Reflection">R</span>
+        {/if}
+
         <span
           class="method-name"
           class:pending-text={entry.status === "pending"}
@@ -135,6 +142,27 @@
     overflow: hidden;
     min-width: 100px;
     flex: 1;
+  }
+
+  .source-tag {
+    font-size: 10px;
+    font-weight: bold;
+    padding: 2px 4px;
+    border-radius: 4px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  .source-p {
+    background: #e0e7ff;
+    color: #4f46e5;
+  }
+
+  .source-r {
+    background: #fdf4ff;
+    color: #c026d3;
   }
 
   .dot {

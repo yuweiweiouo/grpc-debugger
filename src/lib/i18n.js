@@ -56,6 +56,12 @@ export const translations = {
     enter_base_url: 'Enter Base URL',
     edit_url: 'Edit URL',
     lock_url: 'Lock URL',
+    data_sources: 'Data Sources',
+    data_sources_desc: 'Choose which channels to receive gRPC call data from.',
+    source_postmessage: 'PostMessage (Interceptor)',
+    source_postmessage_desc: 'Receive decoded calls from frontend interceptors.',
+    source_reflection: 'Reflection (HAR)',
+    source_reflection_desc: 'Decode binary data using gRPC Server Reflection.',
   },
   zh: {
     network: '網路紀錄',
@@ -107,6 +113,12 @@ export const translations = {
     enter_base_url: '輸入伺服器網址',
     edit_url: '編輯網址',
     lock_url: '鎖定網址',
+    data_sources: '資料來源',
+    data_sources_desc: '選擇接收 gRPC 呼叫資料的管道。',
+    source_postmessage: 'PostMessage（Interceptor）',
+    source_postmessage_desc: '接收前端 Interceptor 已解碼的呼叫資料。',
+    source_reflection: 'Reflection（HAR 解碼）',
+    source_reflection_desc: '透過 gRPC Server Reflection 解碼二進位資料。',
   }
 };
 

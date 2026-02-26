@@ -1,7 +1,7 @@
 <script>
   /**
    * 工具欄 (Toolbar)
-   * 
+   *
    * 提供網路日誌的過濾、清除、以及持久化設定（Preserve Log）。
    */
   import {
@@ -10,6 +10,7 @@
     reprocessAllLogs,
     preserveLog,
   } from "../stores/network";
+  import { enablePostMessage, enableReflection } from "../stores/settings";
   import { t } from "../lib/i18n";
   import { Trash2, Search, RefreshCw } from "lucide-svelte";
 
@@ -32,6 +33,13 @@
 
 <div class="toolbar">
   <div class="left">
+    <button
+      class="icon-btn"
+      on:click={handleClearLogs}
+      title={$t("clear_logs")}
+    >
+      <Trash2 size={16} />
+    </button>
     <div class="search-container">
       <Search size={14} class="search-icon" />
       <input
@@ -44,6 +52,15 @@
       <input type="checkbox" bind:checked={$preserveLog} />
       <span>{$t("preserve_log")}</span>
     </label>
+    <span class="separator">|</span>
+    <label class="preserve-checkbox">
+      <input type="checkbox" bind:checked={$enablePostMessage} />
+      <span>[來源] PostMessage</span>
+    </label>
+    <label class="preserve-checkbox">
+      <input type="checkbox" bind:checked={$enableReflection} />
+      <span>[來源] Reflection</span>
+    </label>
   </div>
 
   <div class="right">
@@ -55,13 +72,6 @@
       class:spinning={isReprocessing}
     >
       <RefreshCw size={16} />
-    </button>
-    <button
-      class="icon-btn"
-      on:click={handleClearLogs}
-      title={$t("clear_logs")}
-    >
-      <Trash2 size={16} />
     </button>
   </div>
 </div>
@@ -80,7 +90,13 @@
     flex: 1;
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 10px;
+  }
+
+  .separator {
+    color: #d1d5db;
+    font-size: 12px;
+    user-select: none;
   }
 
   .preserve-checkbox {

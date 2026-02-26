@@ -7,9 +7,10 @@
  * 3. 處理「本地定義優先」策略：若專案內已有特定 Service 的定義，則跳過 Reflection。
  */
 
-import { writable } from 'svelte/store';
+import { writable, get } from 'svelte/store';
 import { protoEngine } from '../lib/proto-engine';
 import reflectionClient from '../lib/reflection-client';
+import { enableReflection } from './settings';
 
 // 目前註冊的所有服務定義
 export const services = writable([]);
@@ -47,6 +48,9 @@ export async function waitForReflection(origin) {
  */
 export async function tryAutoReflection(url) {
   if (!url || typeof url !== 'string') return false;
+  
+  // 尊重使用者的 Reflection 開關設定
+  if (!get(enableReflection)) return false;
   
   try {
     // 防禦：忽略無法解析為完整 URL 的相對路徑

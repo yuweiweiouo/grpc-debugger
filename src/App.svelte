@@ -1,7 +1,7 @@
 <script>
   /**
    * 應用程序主入口 (Main App Component)
-   * 
+   *
    * 負責組裝側邊欄、頂部工具欄以及主內容區域，
    * 並根據 activePage 狀態切換不同的視圖。
    */
@@ -12,7 +12,6 @@
   import NetworkDetails from "./components/NetworkDetails.svelte";
   import ServicesView from "./components/ServicesView.svelte";
   import SettingsView from "./components/SettingsView.svelte";
-  import PlaygroundView from "./components/PlaygroundView.svelte";
   import { addLog, clearLogs } from "./stores/network";
   import { registerSchema } from "./stores/schema";
   import { activePage } from "./stores/ui";
@@ -31,9 +30,12 @@
           addLog(data);
         };
 
-        // 監聯來自 content-script/background 的訊息
+        // 監聽來自 content-script / background 的訊息
         chrome.runtime.onMessage.addListener((message) => {
-          // Interceptor 已解碼模式：前端 interceptor 直接送入已序列化為 JSON 的 call data
+          // 跳過 background relay 的重複訊息（只處理 content-script 直接送來的）
+          if (message._relayedBy === "background") return;
+
+          // PostMessage Interceptor：前端 interceptor 直接送入已解碼的 call data
           if (
             message.type === "__GRPCWEB_DEVTOOLS__" &&
             message.action === "gRPCNetworkCall"
@@ -45,15 +47,23 @@
             const endpoint = parts.pop() || parts.pop();
 
             addLog({
-              id: `interceptor-${message.timestamp || Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+              id: `interceptor-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
               method,
               endpoint,
               methodType: message.methodType || "unary",
               request: message.request,
-              response: message.error ? { _error: message.error.message || String(message.error), _code: message.error.code } : message.response,
+              response: message.error
+                ? {
+                    _error:
+                      typeof message.error === "string"
+                        ? message.error
+                        : message.error.message || String(message.error),
+                    _code: message.error?.code,
+                  }
+                : message.response,
               error: message.error,
               status: "finished",
-              startTime: (message.timestamp || Date.now()) / 1000,
+              startTime: Date.now() / 1000,
               _source: "interceptor",
             });
             return;
@@ -146,8 +156,6 @@
       </div>
     {:else if $activePage === "services"}
       <ServicesView />
-    {:else if $activePage === "playground"}
-      <PlaygroundView />
     {:else if $activePage === "settings"}
       <SettingsView />
     {/if}
