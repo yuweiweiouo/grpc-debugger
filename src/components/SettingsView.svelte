@@ -1,7 +1,7 @@
 <script>
   /**
    * 設定頁面 (Settings View)
-   * 
+   *
    * 管理應用程序的全域偏好設定，例如語系與佈景主題。
    */
   import { language } from "../stores/settings";

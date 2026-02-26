@@ -58,8 +58,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     chrome.runtime.sendMessage(message);
     return;
   }
-  
-  // Relay other messages (like registerSchema)
+
+  // gRPCNetworkCall 和其他訊息：使用 sendMessage 廣播
+  // (讓 devtools.js 的 onMessage listener 統一接收)
   message._relayedBy = 'background';
   chrome.runtime.sendMessage(message);
 });

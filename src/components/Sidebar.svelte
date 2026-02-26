@@ -1,13 +1,13 @@
 <script>
   /**
    * 側邊導航欄 (Sidebar)
-   * 
+   *
    * 提供主要功能頁面的切換按鈕。
    */
   import { activePage, navigate } from "../stores/ui";
   import { t } from "../lib/i18n";
   import { APP_VERSION } from "../lib/version";
-  import { Activity, ShieldCheck, Settings, Box, Play } from "lucide-svelte";
+  import { Activity, ShieldCheck, Settings, Box } from "lucide-svelte";
 </script>
 
 <nav class="sidebar">
@@ -30,14 +30,6 @@
       title={$t("services")}
     >
       <ShieldCheck size={20} />
-    </button>
-
-    <button
-      class:active={$activePage === "playground"}
-      on:click={() => navigate("playground")}
-      title={$t("playground")}
-    >
-      <Play size={20} />
     </button>
   </div>
 

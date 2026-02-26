@@ -79,8 +79,9 @@ function normalizeUrlFuzzy(url) {
   }
 }
 
-// 監聽來自 background 的攔截訊息
+// 監聽來自 background 的訊息（統一透過 chrome.runtime.sendMessage 廣播）
 chrome.runtime.onMessage.addListener((message) => {
+  // 處理 fetch-interceptor 攔截的 request body 快取
   if (message.type === '__GRPCWEB_DEVTOOLS__' && message.action === 'capturedRequestBody') {
     const fuzzyUrl = message.path || normalizeUrlFuzzy(message.url);
     const internalId = 'ghost-' + Math.random().toString(36).substring(2, 9);
@@ -115,6 +116,104 @@ chrome.runtime.onMessage.addListener((message) => {
     }
   }
 });
+
+// ============================================================================
+// PostMessage Interceptor — 直接注入到頁面
+// 
+// 使用 inspectedWindow.eval 在頁面 main world 注入 message listener，
+// 完全不依賴 content-script 或 injector 的載入時機。
+// ============================================================================
+
+const POLL_INTERVAL_MS = 300;
+
+/**
+ * 透過 inspectedWindow.eval 在頁面注入 postMessage 監聽器
+ * 監聽 __GRPCWEB_DEVTOOLS__ type + gRPCNetworkCall action
+ */
+function injectCallCaptureListener() {
+  chrome.devtools.inspectedWindow.eval(`
+    (function() {
+      if (window.__GRPC_DEBUGGER_LISTENER_INJECTED__) return;
+      window.__GRPC_DEBUGGER_LISTENER_INJECTED__ = true;
+      window.__GRPC_CALLS_QUEUE__ = [];
+      
+      window.addEventListener('message', function(event) {
+        if (event.source !== window) return;
+        var msg = event.data;
+        if (msg && msg.type === '__GRPCWEB_DEVTOOLS__' && msg.action === 'gRPCNetworkCall') {
+          window.__GRPC_CALLS_QUEUE__.push({
+            method: msg.method || '',
+            methodType: msg.methodType || 'unary',
+            request: msg.request || null,
+            response: msg.response || null,
+            error: msg.error || null,
+            timestamp: Date.now()
+          });
+        }
+      });
+    })();
+  `);
+}
+
+// DevTools 開啟時立即注入
+injectCallCaptureListener();
+
+// 頁面導覽後重新注入（因為 listener 會隨頁面卸載消失）
+chrome.devtools.network.onNavigated.addListener(() => {
+  injectCallCaptureListener();
+});
+
+/**
+ * 輪詢：從頁面佇列中 drain call data
+ */
+function pollInterceptorCalls() {
+  chrome.devtools.inspectedWindow.eval(
+    `(function() {
+      var q = window.__GRPC_CALLS_QUEUE__;
+      if (!q || q.length === 0) return '[]';
+      window.__GRPC_CALLS_QUEUE__ = [];
+      return JSON.stringify(q);
+    })()`,
+    (result, isException) => {
+      if (isException || !result) return;
+      
+      try {
+        const calls = JSON.parse(result);
+        for (const call of calls) {
+          const method = call.method?.startsWith('/') ? call.method : `/${call.method || ''}`;
+          const parts = method.split('/');
+          const endpoint = parts.pop() || parts.pop();
+          
+          const data = {
+            id: `interceptor-${call.timestamp || Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            method,
+            endpoint,
+            methodType: call.methodType || 'unary',
+            request: call.request,
+            response: call.error
+              ? { _error: call.error.message || String(call.error), _code: call.error.code }
+              : call.response,
+            error: call.error || null,
+            status: 'finished',
+            startTime: (call.timestamp || Date.now()) / 1000,
+            _source: 'interceptor',
+          };
+
+          if (panelWindow?.dispatchGrpcEvent) {
+            panelWindow.dispatchGrpcEvent(data);
+          } else {
+            pendingEntries.push(data);
+          }
+        }
+      } catch (e) {
+        // JSON parse 失敗時靜默忽略
+      }
+    }
+  );
+}
+
+// 啟動輪詢
+setInterval(pollInterceptorCalls, POLL_INTERVAL_MS);
 
 /**
  * 處理並發送 gRPC 請求到面板
