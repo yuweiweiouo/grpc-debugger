@@ -60,13 +60,27 @@ export const selectedEntry = derived(
 );
 
 /**
+ * Interceptor 已解碼條目的索引表
+ * Key: method path (例如 "/pkg.Service/Method")
+ * Value: 按時間排序的 entry ID 陣列，用於 FIFO 匹配
+ * 
+ * 用途：當 HAR 管道的 entry 進來時，比對是否已有 interceptor 送入的同一個 call，
+ * 若有則合併 HAR metadata 但不覆蓋已解碼的 request/response。
+ */
+const interceptorIndex = new Map();
+
+/** 去重時間容差（毫秒）：interceptor 與 HAR 時間差的容許範圍 */
+const DEDUP_TIME_TOLERANCE_MS = 2000;
+
+/**
  * 新增網路日誌 (Main Entry Point)
  * 
  * 流程：
  * 1. 格式化 Endpoint。
- * 2. 自動嘗試反射 (Auto-Reflection) 以獲取對應的 Schema。
- * 3. 執行解碼管線將二進位轉為 JS 物件。
- * 4. 合併邏輯：防止重複顯示相同的請求 (支援從不同來源更新同一個請求狀態)。
+ * 2. 去重檢測：若為 HAR entry，比對是否已有 interceptor 送入的同 method call。
+ * 3. 自動嘗試反射 (Auto-Reflection) 以獲取對應的 Schema（僅非 interceptor 來源）。
+ * 4. 執行解碼管線將二進位轉為 JS 物件（僅非 interceptor 來源）。
+ * 5. 合併邏輯：防止重複顯示相同的請求。
  * 
  * @param {object} entry 請求條目物件
  */
@@ -77,11 +91,81 @@ export async function addLog(entry) {
     entry.endpoint = parts.pop() || parts.pop();
   }
 
-  // 自動同步：若遇到未知的 URL，嘗試進行 gRPC 反射
-  const isNewSchema = await tryAutoReflection(entry.url);
-  
-  // 執行解碼流程
-  await processEntry(entry);
+  // --- Interceptor 優先去重 ---
+  if (entry._source === 'interceptor') {
+    // 記錄 interceptor entry 供後續 HAR 比對
+    const methodKey = entry.method;
+    if (!interceptorIndex.has(methodKey)) {
+      interceptorIndex.set(methodKey, []);
+    }
+    interceptorIndex.get(methodKey).push({
+      id: entry.id,
+      timestamp: entry.startTime * 1000,
+    });
+
+    // 清理超過 10 秒的舊索引（防止記憶體洩漏）
+    const now = Date.now();
+    for (const [key, queue] of interceptorIndex.entries()) {
+      const filtered = queue.filter(q => now - q.timestamp < 10000);
+      if (filtered.length === 0) {
+        interceptorIndex.delete(key);
+      } else {
+        interceptorIndex.set(key, filtered);
+      }
+    }
+  } else {
+    // 非 interceptor 來源 (HAR)：檢查是否已有 interceptor 送入的同一個 call
+    const methodKey = entry.method;
+    const entryTime = (entry.startTime || 0) * 1000;
+    const queue = interceptorIndex.get(methodKey);
+    
+    if (queue && queue.length > 0) {
+      // FIFO 匹配：找時間最接近的 interceptor entry
+      const matchIdx = queue.findIndex(q => 
+        Math.abs(q.timestamp - entryTime) < DEDUP_TIME_TOLERANCE_MS
+      );
+      
+      if (matchIdx !== -1) {
+        const matched = queue[matchIdx];
+        queue.splice(matchIdx, 1);
+        if (queue.length === 0) interceptorIndex.delete(methodKey);
+        
+        // 合併 HAR metadata 到已有的 interceptor entry，但不覆蓋 request/response
+        log.update(list => {
+          const existingIdx = list.findIndex(e => e.id === matched.id);
+          if (existingIdx !== -1) {
+            const newList = [...list];
+            console.log(`[gRPC Debugger] 🔗 Merging HAR metadata into interceptor entry: ${matched.id}`);
+            newList[existingIdx] = {
+              ...newList[existingIdx],
+              // 只補充 HAR 提供的 metadata，不覆蓋已解碼的 request/response
+              url: entry.url || newList[existingIdx].url,
+              duration: entry.duration ?? newList[existingIdx].duration,
+              size: entry.size ?? newList[existingIdx].size,
+              httpStatus: entry.httpStatus ?? newList[existingIdx].httpStatus,
+              requestHeaders: entry.requestHeaders || newList[existingIdx].requestHeaders,
+              responseHeaders: entry.responseHeaders || newList[existingIdx].responseHeaders,
+              grpcStatus: entry.grpcStatus ?? newList[existingIdx].grpcStatus,
+              grpcMessage: entry.grpcMessage || newList[existingIdx].grpcMessage,
+            };
+            return newList;
+          }
+          return list;
+        });
+        return; // 結束，不新增重複條目
+      }
+    }
+  }
+
+  // 非 interceptor 來源才需要觸發自動反射與解碼
+  let isNewSchema = false;
+  if (entry._source !== 'interceptor') {
+    // 自動同步：若遇到未知的 URL，嘗試進行 gRPC 反射
+    isNewSchema = await tryAutoReflection(entry.url);
+    
+    // 執行解碼流程
+    await processEntry(entry);
+  }
   
   // 合併與更新邏輯 (Prevent Duplicates)
   log.update(list => {
@@ -89,7 +173,7 @@ export async function addLog(entry) {
     const existingIdx = list.findIndex(e => e.id === entry.id);
     
     // 診斷日誌
-    console.log(`[gRPC Debugger] addLog: id=${entry.id}, status=${entry.status}, existingIdx=${existingIdx}, listSize=${list.length}`);
+    console.log(`[gRPC Debugger] addLog: id=${entry.id}, status=${entry.status}, source=${entry._source || 'har'}, existingIdx=${existingIdx}, listSize=${list.length}`);
 
     if (existingIdx !== -1) {
       const newList = [...list];
@@ -145,6 +229,9 @@ export function clearLogs(force = false) {
  * 核心處理：將 entry 中的 Raw 資料轉換為可讀物件
  */
 async function processEntry(entry, forceReprocess = false) {
+  // Interceptor 來源的 entry 已包含解碼好的 JSON，不需走二進位解碼管線
+  if (entry._source === 'interceptor') return;
+
   const methodInfo = protoEngine.findMethod(entry.method);
   
   // 處理請求資料解碼
