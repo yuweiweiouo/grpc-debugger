@@ -55,11 +55,11 @@
     <span class="separator">|</span>
     <label class="preserve-checkbox">
       <input type="checkbox" bind:checked={$enablePostMessage} />
-      <span>[來源] PostMessage</span>
+      <span>[來源] GRPC Web DevTool</span>
     </label>
     <label class="preserve-checkbox">
       <input type="checkbox" bind:checked={$enableReflection} />
-      <span>[來源] Reflection</span>
+      <span>[來源] Server Reflection</span>
     </label>
   </div>
 

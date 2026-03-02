@@ -4,13 +4,17 @@
    *
    * 管理應用程序的全域偏好設定，例如語系與佈景主題。
    */
-  import { language } from "../stores/settings";
+  import { language, combinedView } from "../stores/settings";
   import { t } from "../lib/i18n";
   import { APP_VERSION, APP_NAME } from "../lib/version";
-  import { Settings, Globe, Bug } from "lucide-svelte";
+  import { Settings, Globe, Bug, Layout } from "lucide-svelte";
 
   function setLanguage(lang) {
     language.set(lang);
+  }
+
+  function toggleCombinedView() {
+    combinedView.update((v) => !v);
   }
 
   function openIssue() {
@@ -48,6 +52,28 @@
           on:click={() => setLanguage("zh")}
         >
           繁體中文
+        </button>
+      </div>
+    </section>
+
+    <section class="card" style="margin-top: 16px;">
+      <div class="card-title">
+        <Layout size={18} />
+        <h3>{$t("display_settings")}</h3>
+      </div>
+
+      <div class="toggle-row">
+        <div class="toggle-info">
+          <span class="toggle-label">{$t("combined_view")}</span>
+          <span class="toggle-desc">{$t("combined_view_desc")}</span>
+        </div>
+        <button
+          class="toggle-switch"
+          class:active={$combinedView}
+          on:click={toggleCombinedView}
+          aria-label={$t("combined_view")}
+        >
+          <span class="toggle-knob"></span>
         </button>
       </div>
     </section>
@@ -145,6 +171,71 @@
     border-color: #2563eb;
     color: #2563eb;
     font-weight: 500;
+  }
+
+  .toggle-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 4px 0;
+  }
+
+  .toggle-info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .toggle-label {
+    font-size: 14px;
+    font-weight: 500;
+    color: #374151;
+  }
+
+  .toggle-desc {
+    font-size: 12px;
+    color: #6b7280;
+  }
+
+  .toggle-switch {
+    position: relative;
+    width: 44px;
+    height: 24px;
+    flex: none;
+    padding: 0;
+    border-radius: 12px;
+    background: #e5e7eb;
+    border: none;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+
+  .toggle-switch.active {
+    background: #3b82f6;
+  }
+
+  .toggle-switch:hover {
+    background: #d1d5db;
+  }
+
+  .toggle-switch.active:hover {
+    background: #2563eb;
+  }
+
+  .toggle-knob {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 20px;
+    height: 20px;
+    background: white;
+    border-radius: 50%;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+    transition: transform 0.2s;
+  }
+
+  .toggle-switch.active .toggle-knob {
+    transform: translateX(20px);
   }
 
   .description {

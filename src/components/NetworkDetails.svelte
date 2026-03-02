@@ -1,7 +1,7 @@
 <script>
   /**
    * 請求詳情面板 (Network Details)
-   * 
+   *
    * 展示選定請求的所有細節，包含：
    * 1. 標頭 (Headers) 與 一般資訊。
    * 2. 解碼後的請求與回應 JSON 樹。
@@ -11,6 +11,7 @@
   import { selectedEntry } from "../stores/network";
   import { protoEngine } from "../lib/proto-engine";
   import { t } from "../lib/i18n";
+  import { combinedView } from "../stores/settings";
   import JsonTree from "./JsonTree.svelte";
   import ProtoFieldRow from "./ProtoFieldRow.svelte";
 
@@ -19,7 +20,7 @@
 
   // 反應式數據流：當 Store 中的 selectedEntry 改變時，自動重新計算相應的 Proto 定義與訊息結構
   $: entry = $selectedEntry;
-  $: protoDef = entry ? protoEngine.findMethod(entry.method) : null;
+  $: protoDef = entry ? protoEngine.findMethod(entry.method, entry.url) : null;
   $: requestMsg = protoDef
     ? protoEngine.findMessage(protoDef.requestType)
     : null;
@@ -56,9 +57,51 @@
     try {
       copyText = JSON.stringify(data, jsonReplacer, 2);
     } catch (e) {
-      copyText = `序列化失敗: ${e.message}`;
+      copyText = `${$t("serialize_failed")}: ${e.message}`;
     }
     showCopyModal = true;
+  }
+
+  async function handleCopy(data) {
+    const text = JSON.stringify(data, jsonReplacer, 2);
+
+    try {
+      await navigator.clipboard.writeText(text);
+      copyFeedback = $t("copy_success");
+      setTimeout(() => {
+        copyFeedback = "";
+      }, 1500);
+      return;
+    } catch {
+      // ignore and try legacy fallback
+    }
+
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.setAttribute("readonly", "");
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      ta.style.pointerEvents = "none";
+      document.body.appendChild(ta);
+      ta.select();
+      ta.setSelectionRange(0, ta.value.length);
+      const ok = document.execCommand("copy");
+      document.body.removeChild(ta);
+
+      if (ok) {
+        copyFeedback = $t("copy_success");
+        setTimeout(() => {
+          copyFeedback = "";
+        }, 1500);
+        return;
+      }
+    } catch {
+      // fallback to manual modal
+    }
+
+    copyFeedback = $t("copy_blocked_manual");
+    openCopyModal(data);
   }
 
   function closeCopyModal() {
@@ -80,18 +123,28 @@
         class:active={activeTab === "headers"}
         on:click={() => setTab("headers")}>{$t("headers")}</button
       >
-      <button
-        class:active={activeTab === "request"}
-        on:click={() => setTab("request")}>{$t("request")}</button
-      >
-      <button
-        class:active={activeTab === "response"}
-        on:click={() => setTab("response")}>{$t("response")}</button
-      >
+      {#if $combinedView}
+        <button
+          class:active={activeTab === "data"}
+          on:click={() => setTab("data")}>{$t("combined_tab")}</button
+        >
+      {:else}
+        <button
+          class:active={activeTab === "request"}
+          on:click={() => setTab("request")}>{$t("request")}</button
+        >
+        <button
+          class:active={activeTab === "response"}
+          on:click={() => setTab("response")}>{$t("response")}</button
+        >
+      {/if}
       <button
         class:active={activeTab === "proto"}
         on:click={() => setTab("proto")}>{$t("proto")}</button
       >
+      {#if copyFeedback}
+        <span class="copy-feedback">{copyFeedback}</span>
+      {/if}
     </div>
 
     <div class="content">
@@ -137,12 +190,11 @@
           <div class="data-header">
             <span>Request Data</span>
             {#if entry.request}
-              <button
-                class="copy-btn"
-                on:click={() => openCopyModal(entry.request)}
-              >
-                📋 {$t("copy_json")}
-              </button>
+              <div class="header-actions">
+                <button class="copy-btn" on:click={() => handleCopy(entry.request)}>
+                  {$t("copy_json")}
+                </button>
+              </div>
             {/if}
           </div>
           {#if entry.request}
@@ -156,12 +208,11 @@
           <div class="data-header">
             <span>Response Data</span>
             {#if entry.response}
-              <button
-                class="copy-btn"
-                on:click={() => openCopyModal(entry.response)}
-              >
-                📋 {$t("copy_json")}
-              </button>
+              <div class="header-actions">
+                <button class="copy-btn" on:click={() => handleCopy(entry.response)}>
+                  {$t("copy_json")}
+                </button>
+              </div>
             {/if}
           </div>
           {#if entry.response}
@@ -171,6 +222,49 @@
           {:else}
             <div class="no-data">{$t("no_data")}</div>
           {/if}
+        </div>
+      {:else if activeTab === "data"}
+        <!-- 合併視圖：同時顯示請求和回應 -->
+        <div class="combined-view">
+          <div class="combined-section">
+            <div class="data-header">
+              <span>📤 {$t("request")}</span>
+              {#if entry.request}
+                <div class="header-actions">
+                  <button class="copy-btn" on:click={() => handleCopy(entry.request)}>
+                    {$t("copy_json")}
+                  </button>
+                </div>
+              {/if}
+            </div>
+            {#if entry.request}
+              <JsonTree data={entry.request} />
+            {:else}
+              <div class="no-data">{$t("no_data")}</div>
+            {/if}
+          </div>
+
+          <div class="combined-divider"></div>
+
+          <div class="combined-section">
+            <div class="data-header">
+              <span>📥 {$t("response")}</span>
+              {#if entry.response}
+                <div class="header-actions">
+                  <button class="copy-btn" on:click={() => handleCopy(entry.response)}>
+                    {$t("copy_json")}
+                  </button>
+                </div>
+              {/if}
+            </div>
+            {#if entry.response}
+              <JsonTree data={entry.response} />
+            {:else if entry.status === "pending"}
+              <div class="no-data">Waiting for response...</div>
+            {:else}
+              <div class="no-data">{$t("no_data")}</div>
+            {/if}
+          </div>
         </div>
       {:else if activeTab === "proto"}
         <div class="proto-view">
@@ -215,12 +309,12 @@
 {#if showCopyModal}
   <div
     class="modal-overlay"
-    on:click={closeCopyModal}
+    on:click|self={closeCopyModal}
     on:keydown={(e) => e.key === "Escape" && closeCopyModal()}
     role="button"
     tabindex="-1"
   >
-    <div class="modal-content" on:click|stopPropagation role="dialog">
+    <div class="modal-content" role="dialog" aria-modal="true" tabindex="-1">
       <div class="modal-header">
         <span>{$t("copy_json")}</span>
         <button class="modal-close" on:click={closeCopyModal}>✕</button>
@@ -235,6 +329,7 @@
     </div>
   </div>
 {/if}
+
 
 <style>
   .network-details {
@@ -286,6 +381,14 @@
     padding: 0 12px;
     gap: 8px;
     background: #fdfdfd;
+  }
+
+  .copy-feedback {
+    margin-left: 8px;
+    font-size: 11px;
+    color: #10b981;
+    align-self: center;
+    white-space: nowrap;
   }
 
   .tabs button {
@@ -369,12 +472,18 @@
     color: #6b7280;
   }
 
+  .header-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+
   .copy-btn {
-    background: #f3f4f6;
+    background: #f8fafc;
     border: 1px solid #e5e7eb;
-    border-radius: 4px;
-    padding: 4px 10px;
-    font-size: 11px;
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 12px;
     color: #374151;
     cursor: pointer;
     transition: all 0.15s;
@@ -411,8 +520,13 @@
     font-size: 12px;
   }
 
-  .proto-table th,
-  .proto-table td {
+  .proto-table th {
+    border: 1px solid #f3f4f6;
+    padding: 8px;
+    text-align: left;
+  }
+
+  .proto-table :global(td) {
     border: 1px solid #f3f4f6;
     padding: 8px;
     text-align: left;
@@ -490,4 +604,20 @@
     color: #6b7280;
     text-align: center;
   }
+
+  /* 合併視圖樣式 */
+  .combined-view {
+    padding: 8px;
+  }
+
+  .combined-section {
+    margin-bottom: 16px;
+  }
+
+  .combined-divider {
+    height: 1px;
+    background: linear-gradient(to right, transparent, #e5e7eb, transparent);
+    margin: 20px 0;
+  }
+
 </style>
