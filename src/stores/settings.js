@@ -22,3 +22,11 @@ enablePostMessage.subscribe(val => {
 enableReflection.subscribe(val => {
   localStorage.setItem('grpc_debugger_reflection', String(val));
 });
+
+// 合併視圖開關
+const initialCombinedView = localStorage.getItem('grpc_debugger_combined_view') === 'true';
+export const combinedView = writable(initialCombinedView);
+
+combinedView.subscribe(val => {
+  localStorage.setItem('grpc_debugger_combined_view', val ? 'true' : 'false');
+});
