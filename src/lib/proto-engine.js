@@ -503,6 +503,8 @@ class ProtoEngine {
   }
 }
 
+export { ProtoEngine };
+
 // 匯出單例：保證整個應用共用同一個 Schema 註冊表
 export const protoEngine = new ProtoEngine();
 export default protoEngine;
