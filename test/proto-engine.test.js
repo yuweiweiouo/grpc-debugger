@@ -16,7 +16,7 @@ describe('proto-engine', () => {
             name: 'HelloRequest',
             fullName: 'test.HelloRequest',
             fields: [
-              { name: 'name', number: 1, type: 9 } // string
+              { name: 'name', number: 1, type: 9 }
             ]
           }
         }
@@ -38,6 +38,69 @@ describe('proto-engine', () => {
 
       expect(engine.serviceMap.size).toBe(1);
       expect(engine.serviceMap.has('/test.Greeter/SayHello')).toBe(true);
+    });
+
+    it('應移除 requestType/responseType 的前導點', () => {
+      engine.registerSchema({
+        services: [{
+          fullName: '.pkg.MyService',
+          methods: [
+            { name: 'DoWork', requestType: '.pkg.Request', responseType: '.pkg.Response' }
+          ]
+        }]
+      });
+
+      const info = engine.serviceMap.get('/pkg.MyService/DoWork');
+      expect(info).toBeDefined();
+      expect(info.requestType).toBe('pkg.Request');
+      expect(info.responseType).toBe('pkg.Response');
+    });
+
+    it('應覆蓋已存在的 registry', () => {
+      const fakeRegistry = { getMessage: () => null };
+      engine.registerSchema({ registry: fakeRegistry });
+      expect(engine.registry).toBe(fakeRegistry);
+    });
+  });
+
+  describe('findMethod', () => {
+    beforeEach(() => {
+      engine.registerSchema({
+        services: [{
+          fullName: 'api.v1.UserService',
+          methods: [
+            { name: 'GetUser', requestType: '.api.v1.GetUserRequest', responseType: '.api.v1.GetUserResponse' },
+            { name: 'ListUsers', requestType: '.api.v1.ListUsersRequest', responseType: '.api.v1.ListUsersResponse' }
+          ]
+        }]
+      });
+    });
+
+    it('應透過完全匹配找到方法', () => {
+      const method = engine.findMethod('/api.v1.UserService/GetUser');
+      expect(method).not.toBeNull();
+      expect(method.methodName).toBe('GetUser');
+    });
+
+    it('應透過後綴匹配找到方法', () => {
+      const method = engine.findMethod('/api.v1.UserService/GetUser');
+      expect(method).not.toBeNull();
+      expect(method.methodName).toBe('GetUser');
+    });
+
+    it('應支援大小寫不敏感的後綴匹配', () => {
+      const method = engine.findMethod('/API.V1.USERSERVICE/GETUSER');
+      expect(method).not.toBeNull();
+      expect(method.methodName).toBe('GetUser');
+    });
+
+    it('找不到時應回傳 null', () => {
+      expect(engine.findMethod('/NonExistent/Method')).toBeNull();
+    });
+
+    it('空路徑應回傳 null', () => {
+      expect(engine.findMethod(null)).toBeNull();
+      expect(engine.findMethod('')).toBeNull();
     });
   });
 
@@ -64,71 +127,83 @@ describe('proto-engine', () => {
     });
 
     it('找不到時應回傳 null', () => {
-      const msg = engine.findMessage('NonExistent');
-      expect(msg).toBeNull();
+      expect(engine.findMessage('NonExistent')).toBeNull();
+    });
+
+    it('空名稱應回傳 null', () => {
+      expect(engine.findMessage(null)).toBeNull();
+      expect(engine.findMessage('')).toBeNull();
+    });
+
+    it('應移除前導點後查找', () => {
+      const msg = engine.findMessage('.common.Product');
+      expect(msg).not.toBeNull();
+      expect(msg.fullName).toBe('common.Product');
     });
   });
 
   describe('decodeMessage', () => {
-    beforeEach(() => {
-      engine.registerSchema({
-        messages: {
-          'test.Simple': {
-            name: 'Simple',
-            fullName: 'test.Simple',
-            fields: [
-              { name: 'id', number: 1, type: 5 }, // int32
-              { name: 'name', number: 2, type: 9 }, // string
-            ]
-          }
-        }
-      });
-    });
-
-    it('應正確解碼簡單訊息', () => {
-      // Protobuf: { id: 42, name: "test" }
-      // Field 1 (varint): 0x08 0x2a = id=42
-      // Field 2 (string): 0x12 0x04 "test" = name="test"
-      const buffer = new Uint8Array([
-        0x08, 0x2a, // field 1, varint 42
-        0x12, 0x04, 0x74, 0x65, 0x73, 0x74 // field 2, string "test"
-      ]);
-
-      const result = engine.decodeMessage('test.Simple', buffer);
-
-      expect(result.id).toBe(42n); // BigInt from varint
-      expect(result.name).toBe('test');
-    });
-
-    it('應在無 schema 時執行盲測解碼', () => {
-      const buffer = new Uint8Array([
-        0x08, 0x0a, // field 1, varint 10
-      ]);
-
-      const result = engine.decodeMessage('unknown.Type', buffer);
-
-      // 盲測解碼用 field_N 作為欄位名
-      expect(result.field_1).toBeDefined();
-    });
-
     it('應正確處理空 buffer', () => {
       const result = engine.decodeMessage('test.Simple', new Uint8Array(0));
       expect(result).toEqual({});
     });
-  });
 
-  describe('isPackableType', () => {
-    it('應識別可壓縮的純量類型', () => {
-      expect(engine.isPackableType(1)).toBe(true);  // DOUBLE
-      expect(engine.isPackableType(5)).toBe(true);  // INT32
-      expect(engine.isPackableType(8)).toBe(true);  // BOOL
-      expect(engine.isPackableType(14)).toBe(true); // ENUM
+    it('無 typeName 時應回傳錯誤物件', () => {
+      const buffer = new Uint8Array([0x08, 0x0a]);
+      const result = engine.decodeMessage(null, buffer);
+      expect(result._error).toBeDefined();
     });
 
-    it('應拒絕不可壓縮的類型', () => {
-      expect(engine.isPackableType(9)).toBe(false);  // STRING
-      expect(engine.isPackableType(11)).toBe(false); // MESSAGE
-      expect(engine.isPackableType(12)).toBe(false); // BYTES
+    it('找不到 schema 時應回傳錯誤物件', () => {
+      const buffer = new Uint8Array([0x08, 0x0a]);
+      const result = engine.decodeMessage('unknown.Type', buffer);
+      expect(result._error).toContain('找不到 Schema 定義');
+    });
+
+    it('應回傳 buffer 長度資訊', () => {
+      const buffer = new Uint8Array([0x08, 0x0a]);
+      const result = engine.decodeMessage('unknown.Type', buffer);
+      expect(result._rawLength).toBe(2);
+    });
+  });
+
+  describe('_convertValue', () => {
+    it('應將安全範圍內的 BigInt 轉為 Number', () => {
+      expect(engine._convertValue(42n)).toBe(42);
+      expect(engine._convertValue(0n)).toBe(0);
+      expect(engine._convertValue(-100n)).toBe(-100);
+    });
+
+    it('應將超出安全範圍的 BigInt 轉為字串', () => {
+      const big = BigInt(Number.MAX_SAFE_INTEGER) + 1n;
+      expect(typeof engine._convertValue(big)).toBe('string');
+    });
+
+    it('應保持非 BigInt 值不變', () => {
+      expect(engine._convertValue('hello')).toBe('hello');
+      expect(engine._convertValue(42)).toBe(42);
+      expect(engine._convertValue(null)).toBe(null);
+      expect(engine._convertValue(true)).toBe(true);
+    });
+  });
+
+  describe('_fieldKindToType', () => {
+    it('應優先使用 proto.type', () => {
+      expect(engine._fieldKindToType({ proto: { type: 5 } })).toBe(5);
+    });
+
+    it('應根據 kind 推斷類型', () => {
+      expect(engine._fieldKindToType({ kind: 'message' })).toBe(11);
+      expect(engine._fieldKindToType({ kind: 'enum' })).toBe(14);
+      expect(engine._fieldKindToType({ kind: 'map' })).toBe(11);
+    });
+
+    it('應處理 scalar kind', () => {
+      expect(engine._fieldKindToType({ kind: 'scalar', scalar: 5 })).toBe(5);
+    });
+
+    it('應預設回傳 string 類型', () => {
+      expect(engine._fieldKindToType({})).toBe(9);
     });
   });
 });

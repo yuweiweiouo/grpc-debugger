@@ -1,10 +1,12 @@
 import { writable } from 'svelte/store';
+import { STORAGE_KEYS } from './settings';
 
-// 預設寬度 400px，確保時間戳與耗時欄位皆可見
-const initialWidth = parseInt(localStorage.getItem('grpc_debugger_list_width')) || 400;
+const DEFAULT_LIST_PANE_WIDTH = 400;
+
+const initialWidth = parseInt(localStorage.getItem(STORAGE_KEYS.LIST_PANE_WIDTH)) || DEFAULT_LIST_PANE_WIDTH;
 
 export const listPaneWidth = writable(initialWidth);
 
 listPaneWidth.subscribe(val => {
-  localStorage.setItem('grpc_debugger_list_width', val.toString());
+  localStorage.setItem(STORAGE_KEYS.LIST_PANE_WIDTH, val.toString());
 });
