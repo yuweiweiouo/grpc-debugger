@@ -6,6 +6,7 @@ export const STORAGE_KEYS = Object.freeze({
   REFLECTION: 'grpc_debugger_reflection',
   COMBINED_VIEW: 'grpc_debugger_combined_view',
   LIST_PANE_WIDTH: 'grpc_debugger_list_width',
+  THEME: 'grpc_debugger_theme',
 });
 
 const initialLanguage = localStorage.getItem(STORAGE_KEYS.LANGUAGE) || 'en';
@@ -35,4 +36,11 @@ export const combinedView = writable(initialCombinedView);
 
 combinedView.subscribe(val => {
   localStorage.setItem(STORAGE_KEYS.COMBINED_VIEW, val ? 'true' : 'false');
+});
+
+const initialTheme = localStorage.getItem(STORAGE_KEYS.THEME) || 'system';
+export const theme = writable(initialTheme);
+
+theme.subscribe(val => {
+  localStorage.setItem(STORAGE_KEYS.THEME, val);
 });

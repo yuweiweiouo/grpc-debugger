@@ -122,17 +122,17 @@
     align-items: center;
     gap: 16px;
     padding: 8px 12px;
-    border-bottom: 1px solid #f3f4f6;
+    border-bottom: 1px solid var(--color-border-light);
     cursor: pointer;
     transition: background 0.2s;
   }
 
   .row:hover {
-    background: #f9fafb;
+    background: var(--color-bg-secondary);
   }
 
   .row.selected {
-    background: #eff6ff;
+    background: var(--color-primary-bg);
   }
 
   .method-col {
@@ -156,33 +156,33 @@
   }
 
   .source-p {
-    background: #e0e7ff;
-    color: #4f46e5;
+    background: var(--color-badge-p-bg);
+    color: var(--color-badge-p-text);
   }
 
   .source-r {
-    background: #fdf4ff;
-    color: #c026d3;
+    background: var(--color-badge-r-bg);
+    color: var(--color-badge-r-text);
   }
 
   .dot {
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    background: #d1d5db;
+    background: var(--color-text-tertiary);
     flex-shrink: 0;
   }
 
   .dot.success {
-    background: #10b981;
+    background: var(--color-success);
   }
 
   .dot.error {
-    background: #ef4444;
+    background: var(--color-error, #ef4444);
   }
 
   .dot.pending {
-    background: #8b5cf6;
+    background: var(--color-purple);
     animation: pulse 1.5s infinite;
   }
 
@@ -202,14 +202,14 @@
   }
 
   .pending-text {
-    color: #8b5cf6 !important;
+    color: var(--color-purple) !important;
     font-style: italic;
   }
 
   .method-name {
     font-size: 13px;
     font-weight: 500;
-    color: #374151;
+    color: var(--color-text-primary);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -224,14 +224,14 @@
 
   .start-time {
     font-size: 11px;
-    color: #9ca3af;
+    color: var(--color-text-tertiary);
     font-family: monospace;
     width: 60px;
   }
 
   .time {
     font-size: 11px;
-    color: #9ca3af;
+    color: var(--color-text-tertiary);
     min-width: 70px;
     text-align: right;
     font-family: monospace;
@@ -240,7 +240,7 @@
   .empty {
     padding: 40px 20px;
     text-align: center;
-    color: #9ca3af;
+    color: var(--color-text-tertiary);
     font-size: 13px;
   }
 </style>

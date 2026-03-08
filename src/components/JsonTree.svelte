@@ -1,26 +1,20 @@
 <script>
-  /**
-   * JSON 樹狀瀏覽組件 (Recursive JSON Tree)
-   * 
-   * 職責：
-   * 1. 以無限遞迴的方式呈現 Protobuf 解碼後的巢狀物件結構。
-   * 2. 針對 Protobuf 特殊類型 (Bytes, BigInt) 進行美化顯示。
-   * 3. 支援節點展開/摺疊，預設只展開前兩層以維護性能。
-   */
+  import { t } from "../lib/i18n";
+
   export let data;
   export let label = null;
   export let depth = 0;
   export let expanded = depth < 2;
+  export let searchQuery = "";
 
   $: isObject =
     typeof data === "object" && data !== null && !(data instanceof Uint8Array);
   $: objectTypeName = isObject && data.$typeName ? data.$typeName : "";
   $: keys = isObject ? Object.keys(data).filter((k) => k !== "$typeName") : [];
   $: type = getType(data);
+  $: hasMatchInChildren = searchQuery && isObject ? checkChildrenMatch(data, searchQuery) : false;
+  $: shouldExpand = expanded || hasMatchInChildren;
 
-  /**
-   * 偵測資料類型以匹配不同的 CSS 樣式
-   */
   function getType(val) {
     if (Array.isArray(val)) return "Array";
     if (val instanceof Uint8Array) return "Uint8Array";
@@ -29,27 +23,44 @@
     return typeof val;
   }
 
-  /**
-   * 資料視覺化預處理
-   * 確保 bytes 或超大數值能以人類可讀的格式顯示。
-   */
   function formatValue(val) {
     if (val === null) return "null";
     if (val === undefined) return "undefined";
     if (typeof val === "bigint") return val.toString(); 
     if (val instanceof Uint8Array) {
       if (val.length === 0) return "[]";
-      // 對短 Byte 陣列顯示 16 進位預覽
       if (val.length <= 16) {
         return `[${Array.from(val)
           .map((b) => "0x" + b.toString(16).padStart(2, "0"))
           .join(", ")}]`;
       }
-      // 對長 Byte 陣列僅顯示長度
       return `[${val.length} bytes]`;
     }
     if (typeof val === "string") return `"${val}"`;
     return String(val);
+  }
+
+  function checkChildrenMatch(obj, query) {
+    if (!query || !obj) return false;
+    const q = query.toLowerCase();
+    for (const key of Object.keys(obj)) {
+      if (key === "$typeName") continue;
+      if (key.toLowerCase().includes(q)) return true;
+      const val = obj[key];
+      if (val !== null && val !== undefined) {
+        const str = typeof val === "object" ? "" : String(val);
+        if (str.toLowerCase().includes(q)) return true;
+        if (typeof val === "object" && !(val instanceof Uint8Array)) {
+          if (checkChildrenMatch(val, query)) return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  function isMatch(text) {
+    if (!searchQuery || !text) return false;
+    return String(text).toLowerCase().includes(searchQuery.toLowerCase());
   }
 
   function toggle() {
@@ -72,26 +83,31 @@
       role="button"
       tabindex="0"
     >
-      <span class="toggle">{expanded ? "▼" : "▶"}</span>
-      {#if label}<span class="key">{label}:</span>{/if}
+      <span class="toggle">{shouldExpand ? "▼" : "▶"}</span>
+      {#if label}
+        <span class="key" class:highlighted={isMatch(label)}>{label}:</span>
+      {/if}
       <span class="type">
         {objectTypeName || type} [{keys.length}]
       </span>
     </div>
-    {#if expanded}
+    {#if shouldExpand}
       {#each keys as key}
-        <svelte:self data={data[key]} label={key} depth={depth + 1} />
+        <svelte:self data={data[key]} label={key} depth={depth + 1} {searchQuery} />
       {/each}
     {/if}
   {:else}
     <div class="item leaf">
-      {#if label}<span class="key">{label}:</span>{/if}
+      {#if label}
+        <span class="key" class:highlighted={isMatch(label)}>{label}:</span>
+      {/if}
       <span
         class="value"
         class:string={typeof data === "string"}
         class:number={typeof data === "number"}
         class:bigint={typeof data === "bigint"}
         class:bytes={data instanceof Uint8Array}
+        class:highlighted={isMatch(formatValue(data))}
       >
         {formatValue(data)}
       </span>
@@ -117,7 +133,7 @@
   }
 
   .item:hover {
-    background: #f3f4f6;
+    background: var(--color-bg-hover, #f3f4f6);
   }
 
   .item.leaf {
@@ -128,38 +144,44 @@
   .toggle {
     font-size: 8px;
     width: 10px;
-    color: #9ca3af;
+    color: var(--color-text-tertiary, #9ca3af);
   }
 
   .key {
-    color: #8b5cf6;
+    color: var(--color-purple, #8b5cf6);
     font-weight: 500;
   }
 
   .type {
-    color: #9ca3af;
+    color: var(--color-text-tertiary, #9ca3af);
     font-size: 11px;
     font-style: italic;
   }
 
   .value {
-    color: #111827;
+    color: var(--color-text-primary, #111827);
   }
 
   .value.string {
-    color: #059669;
+    color: var(--color-success, #059669);
   }
 
   .value.number {
-    color: #2563eb;
+    color: var(--color-primary, #2563eb);
   }
 
   .value.bigint {
-    color: #7c3aed;
+    color: var(--color-purple-dark, #7c3aed);
   }
 
   .value.bytes {
-    color: #ea580c;
+    color: var(--color-warning, #ea580c);
     font-size: 12px;
+  }
+
+  .highlighted {
+    background: var(--color-highlight, #fef08a);
+    border-radius: 2px;
+    padding: 0 2px;
   }
 </style>

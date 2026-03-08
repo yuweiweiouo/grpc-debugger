@@ -16,11 +16,16 @@
   import { registerSchema } from "./stores/schema";
   import { activePage } from "./stores/ui";
   import { listPaneWidth } from "./stores/layout";
+  import { theme } from "./stores/settings";
   import { t } from "./lib/i18n";
 
   let tabId;
 
   onMount(() => {
+    applyTheme($theme);
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    mediaQuery.addEventListener('change', onSystemThemeChange);
+
     if (typeof chrome !== "undefined" && chrome.devtools) {
       try {
         tabId = chrome.devtools.inspectedWindow.tabId;
@@ -89,9 +94,10 @@
   });
 
   onDestroy(() => {
-    // 清理全域函式和 listeners
     if (typeof window !== "undefined") {
       delete window.dispatchGrpcEvent;
+      const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+      mediaQuery.removeEventListener('change', onSystemThemeChange);
     }
     if (typeof chrome !== "undefined" && chrome.tabs?.onUpdated) {
       chrome.tabs.onUpdated.removeListener(onTabUpdated);
@@ -125,12 +131,24 @@
 
   function handleResize(e) {
     if (!isResizing) return;
-    // 側邊欄寬度 = 滑鼠 X 座標 - Sidebar 寬度 (60px)
     const newWidth = e.clientX - 60;
     if (newWidth > 200 && newWidth < 800) {
       listPaneWidth.set(newWidth);
     }
   }
+
+  function applyTheme(themeValue) {
+    if (typeof document === 'undefined') return;
+    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    const isDark = themeValue === 'dark' || (themeValue === 'system' && prefersDark);
+    document.body.classList.toggle('dark', isDark);
+  }
+
+  function onSystemThemeChange() {
+    applyTheme($theme);
+  }
+
+  $: applyTheme($theme);
 </script>
 
 <main class="app-layout">
@@ -164,24 +182,36 @@
 
 <style>
   :global(body) {
-    /* 設計系統色彩變數 */
     --color-primary: #2563eb;
     --color-primary-dark: #1d4ed8;
+    --color-primary-bg: #eff6ff;
     --color-success: #059669;
+    --color-success-bg: #ecfdf5;
+    --color-error: #ef4444;
+    --color-error-bg: #fef2f2;
     --color-warning: #ea580c;
     --color-purple: #8b5cf6;
     --color-purple-dark: #7c3aed;
+    --color-purple-bg: #fdf4ff;
 
     --color-text-primary: #111827;
     --color-text-secondary: #6b7280;
     --color-text-tertiary: #9ca3af;
 
-    --color-bg-primary: white;
+    --color-bg-primary: #ffffff;
     --color-bg-secondary: #f9fafb;
+    --color-bg-tertiary: #f3f4f6;
     --color-bg-hover: #f3f4f6;
 
     --color-border: #e5e7eb;
     --color-border-light: #f3f4f6;
+
+    --color-badge-p-bg: #e0e7ff;
+    --color-badge-p-text: #4f46e5;
+    --color-badge-r-bg: #fdf4ff;
+    --color-badge-r-text: #c026d3;
+
+    --color-highlight: #fef08a;
 
     margin: 0;
     font-family:
@@ -192,6 +222,40 @@
     overflow: hidden;
     background-color: var(--color-bg-secondary);
     color: var(--color-text-primary);
+    transition: background-color 0.2s, color 0.2s;
+  }
+
+  :global(body.dark) {
+    --color-primary: #3b82f6;
+    --color-primary-dark: #2563eb;
+    --color-primary-bg: #1e3a5f;
+    --color-success: #34d399;
+    --color-success-bg: #064e3b;
+    --color-error: #f87171;
+    --color-error-bg: #450a0a;
+    --color-warning: #fb923c;
+    --color-purple: #a78bfa;
+    --color-purple-dark: #8b5cf6;
+    --color-purple-bg: #2e1065;
+
+    --color-text-primary: #f3f4f6;
+    --color-text-secondary: #9ca3af;
+    --color-text-tertiary: #6b7280;
+
+    --color-bg-primary: #1f2937;
+    --color-bg-secondary: #111827;
+    --color-bg-tertiary: #374151;
+    --color-bg-hover: #374151;
+
+    --color-border: #374151;
+    --color-border-light: #1f2937;
+
+    --color-badge-p-bg: #312e81;
+    --color-badge-p-text: #a5b4fc;
+    --color-badge-r-bg: #4a1d96;
+    --color-badge-r-text: #d8b4fe;
+
+    --color-highlight: #854d0e;
   }
 
   .app-layout {
@@ -209,8 +273,8 @@
 
   header {
     flex: 0 0 auto;
-    border-bottom: 1px solid #e5e7eb;
-    background: white;
+    border-bottom: 1px solid var(--color-border);
+    background: var(--color-bg-primary);
   }
 
   .split-view {
@@ -240,14 +304,14 @@
     width: var(--list-width);
     min-width: var(--list-width);
     max-width: var(--list-width);
-    border-right: 1px solid #e5e7eb;
-    background: white;
+    border-right: 1px solid var(--color-border);
+    background: var(--color-bg-primary);
     overflow: auto;
   }
 
   .details-pane {
     flex: 1;
-    background: white;
+    background: var(--color-bg-primary);
     overflow: hidden;
   }
 </style>

@@ -17,6 +17,8 @@
 
   let activeTab = "request";
   let copyFeedback = "";
+  let searchQuery = "";
+  let replayStatus = "";
 
   // 反應式數據流：當 Store 中的 selectedEntry 改變時，自動重新計算相應的 Proto 定義與訊息結構
   $: entry = $selectedEntry;
@@ -112,6 +114,58 @@
   function selectAllText(e) {
     e.target.select();
   }
+
+  async function handleReplay() {
+    if (!entry?.url) {
+      replayStatus = $t('replay_no_data');
+      setTimeout(() => { replayStatus = ''; }, 2000);
+      return;
+    }
+
+    replayStatus = $t('replaying');
+
+    const headers = entry.requestHeaders || {};
+    const body = entry.requestRaw || null;
+    const isBase64 = entry.requestBase64Encoded;
+
+    const replayScript = `
+      (async function() {
+        try {
+          const headers = ${JSON.stringify(headers)};
+          ${isBase64 && body
+            ? `const raw = atob(${JSON.stringify(body)});
+               const bytes = new Uint8Array(raw.length);
+               for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+               var bodyData = bytes.buffer;`
+            : body
+              ? `var bodyData = ${JSON.stringify(body)};`
+              : `var bodyData = null;`}
+          const resp = await fetch(${JSON.stringify(entry.url)}, {
+            method: 'POST',
+            headers,
+            body: bodyData,
+          });
+          return 'OK:' + resp.status;
+        } catch(e) {
+          return 'ERR:' + e.message;
+        }
+      })()
+    `;
+
+    if (typeof chrome !== 'undefined' && chrome.devtools?.inspectedWindow) {
+      chrome.devtools.inspectedWindow.eval(replayScript, (result, isException) => {
+        if (isException || !result || result.startsWith('ERR:')) {
+          replayStatus = $t('replay_failed');
+        } else {
+          replayStatus = $t('replay_success');
+        }
+        setTimeout(() => { replayStatus = ''; }, 2000);
+      });
+    } else {
+      replayStatus = $t('replay_failed');
+      setTimeout(() => { replayStatus = ''; }, 2000);
+    }
+  }
 </script>
 
 <div class="network-details">
@@ -142,8 +196,12 @@
         class:active={activeTab === "proto"}
         on:click={() => setTab("proto")}>{$t("proto")}</button
       >
+      <div class="tab-spacer"></div>
       {#if copyFeedback}
         <span class="copy-feedback">{copyFeedback}</span>
+      {/if}
+      {#if replayStatus}
+        <span class="copy-feedback">{replayStatus}</span>
       {/if}
     </div>
 
@@ -175,15 +233,26 @@
             <div class="spinner"></div>
             <p>Waiting for response from server...</p>
           </div>
-        {:else if entry.requestHeaders}
-          <section>
-            <h3>{$t("request_headers")}</h3>
-            {#each Object.entries(entry.requestHeaders) as [k, v]}
-              <div class="field">
-                <span class="label">{k}:</span> <span class="val">{v}</span>
+        {:else}
+          {#if entry.url}
+            <section>
+              <div class="replay-row">
+                <button class="replay-btn" on:click={handleReplay}>
+                  ▶ {$t('replay')}
+                </button>
               </div>
-            {/each}
-          </section>
+            </section>
+          {/if}
+          {#if entry.requestHeaders}
+            <section>
+              <h3>{$t("request_headers")}</h3>
+              {#each Object.entries(entry.requestHeaders) as [k, v]}
+                <div class="field">
+                  <span class="label">{k}:</span> <span class="val">{v}</span>
+                </div>
+              {/each}
+            </section>
+          {/if}
         {/if}
       {:else if activeTab === "request"}
         <div class="data-view">
@@ -191,6 +260,7 @@
             <span>Request Data</span>
             {#if entry.request}
               <div class="header-actions">
+                <input class="search-input" type="text" placeholder={$t('search_in_data')} bind:value={searchQuery} />
                 <button class="copy-btn" on:click={() => handleCopy(entry.request)}>
                   {$t("copy_json")}
                 </button>
@@ -198,7 +268,7 @@
             {/if}
           </div>
           {#if entry.request}
-            <JsonTree data={entry.request} />
+            <JsonTree data={entry.request} {searchQuery} />
           {:else}
             <div class="no-data">{$t("no_data")}</div>
           {/if}
@@ -209,6 +279,7 @@
             <span>Response Data</span>
             {#if entry.response}
               <div class="header-actions">
+                <input class="search-input" type="text" placeholder={$t('search_in_data')} bind:value={searchQuery} />
                 <button class="copy-btn" on:click={() => handleCopy(entry.response)}>
                   {$t("copy_json")}
                 </button>
@@ -216,7 +287,7 @@
             {/if}
           </div>
           {#if entry.response}
-            <JsonTree data={entry.response} />
+            <JsonTree data={entry.response} {searchQuery} />
           {:else if entry.status === "pending"}
             <div class="no-data">Waiting for response...</div>
           {:else}
@@ -231,6 +302,7 @@
               <span>📤 {$t("request")}</span>
               {#if entry.request}
                 <div class="header-actions">
+                  <input class="search-input" type="text" placeholder={$t('search_in_data')} bind:value={searchQuery} />
                   <button class="copy-btn" on:click={() => handleCopy(entry.request)}>
                     {$t("copy_json")}
                   </button>
@@ -238,7 +310,7 @@
               {/if}
             </div>
             {#if entry.request}
-              <JsonTree data={entry.request} />
+              <JsonTree data={entry.request} {searchQuery} />
             {:else}
               <div class="no-data">{$t("no_data")}</div>
             {/if}
@@ -258,7 +330,7 @@
               {/if}
             </div>
             {#if entry.response}
-              <JsonTree data={entry.response} />
+              <JsonTree data={entry.response} {searchQuery} />
             {:else if entry.status === "pending"}
               <div class="no-data">Waiting for response...</div>
             {:else}
@@ -343,7 +415,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    color: #9ca3af;
+    color: var(--color-text-tertiary);
     font-size: 14px;
   }
 
@@ -353,40 +425,40 @@
     align-items: center;
     justify-content: center;
     padding: 40px 20px;
-    color: #8b5cf6;
+    color: var(--color-purple);
     gap: 12px;
   }
 
   .spinner {
     width: 24px;
     height: 24px;
-    border: 3px solid #f3f3f3;
-    border-top: 3px solid #8b5cf6;
+    border: 3px solid var(--color-border-light);
+    border-top: 3px solid var(--color-purple);
     border-radius: 50%;
     animation: spin 1s linear infinite;
   }
 
   @keyframes spin {
-    0% {
-      transform: rotate(0deg);
-    }
-    100% {
-      transform: rotate(360deg);
-    }
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
   }
 
   .tabs {
     display: flex;
-    border-bottom: 1px solid #e5e7eb;
+    border-bottom: 1px solid var(--color-border);
     padding: 0 12px;
     gap: 8px;
-    background: #fdfdfd;
+    background: var(--color-bg-primary);
+  }
+
+  .tab-spacer {
+    flex: 1;
   }
 
   .copy-feedback {
     margin-left: 8px;
     font-size: 11px;
-    color: #10b981;
+    color: var(--color-success);
     align-self: center;
     white-space: nowrap;
   }
@@ -397,13 +469,13 @@
     padding: 6px 10px;
     font-size: 13px;
     font-weight: 500;
-    color: #6b7280;
+    color: var(--color-text-secondary);
     cursor: pointer;
     position: relative;
   }
 
   .tabs button.active {
-    color: #2563eb;
+    color: var(--color-primary);
   }
 
   .tabs button.active::after {
@@ -413,7 +485,7 @@
     left: 0;
     right: 0;
     height: 2px;
-    background: #2563eb;
+    background: var(--color-primary);
   }
 
   .content {
@@ -430,9 +502,9 @@
     font-size: 12px;
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    color: #9ca3af;
+    color: var(--color-text-tertiary);
     margin-bottom: 12px;
-    border-bottom: 1px solid #f3f4f6;
+    border-bottom: 1px solid var(--color-border-light);
     padding-bottom: 4px;
   }
 
@@ -444,12 +516,12 @@
 
   .label {
     font-weight: 600;
-    color: #4b5563;
+    color: var(--color-text-secondary);
     margin-right: 8px;
   }
 
   .val {
-    color: #111827;
+    color: var(--color-text-primary);
   }
 
   .data-view,
@@ -462,14 +534,14 @@
     justify-content: space-between;
     align-items: center;
     padding: 8px 0;
-    border-bottom: 1px solid #f3f4f6;
+    border-bottom: 1px solid var(--color-border-light);
     margin-bottom: 12px;
   }
 
   .data-header span {
     font-size: 12px;
     font-weight: 600;
-    color: #6b7280;
+    color: var(--color-text-secondary);
   }
 
   .header-actions {
@@ -478,26 +550,64 @@
     align-items: center;
   }
 
+  .search-input {
+    background: var(--color-bg-tertiary, #f3f4f6);
+    border: 1px solid var(--color-border);
+    border-radius: 6px;
+    padding: 4px 8px;
+    font-size: 12px;
+    color: var(--color-text-primary);
+    width: 160px;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+
+  .search-input:focus {
+    border-color: var(--color-primary);
+  }
+
   .copy-btn {
-    background: #f8fafc;
-    border: 1px solid #e5e7eb;
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border);
     border-radius: 6px;
     padding: 6px 10px;
     font-size: 12px;
-    color: #374151;
+    color: var(--color-text-primary);
     cursor: pointer;
     transition: all 0.15s;
   }
 
   .copy-btn:hover {
-    background: #e5e7eb;
-    border-color: #d1d5db;
+    background: var(--color-bg-hover);
+    border-color: var(--color-text-tertiary);
+  }
+
+  .replay-row {
+    display: flex;
+    gap: 8px;
+  }
+
+  .replay-btn {
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border);
+    border-radius: 6px;
+    padding: 6px 14px;
+    font-size: 12px;
+    color: var(--color-primary);
+    cursor: pointer;
+    font-weight: 500;
+    transition: all 0.15s;
+  }
+
+  .replay-btn:hover {
+    background: var(--color-primary-bg);
+    border-color: var(--color-primary);
   }
 
   .no-data {
     text-align: center;
     padding: 40px;
-    color: #9ca3af;
+    color: var(--color-text-tertiary);
     font-style: italic;
   }
 
@@ -507,8 +617,8 @@
 
   h4 {
     font-size: 11px;
-    color: #6b7280;
-    background: #f9fafb;
+    color: var(--color-text-secondary);
+    background: var(--color-bg-secondary);
     padding: 4px 8px;
     border-radius: 4px;
     margin-bottom: 12px;
@@ -521,21 +631,18 @@
   }
 
   .proto-table th {
-    border: 1px solid #f3f4f6;
+    border: 1px solid var(--color-border-light);
     padding: 8px;
     text-align: left;
+    background: var(--color-bg-secondary);
+    font-weight: 600;
+    color: var(--color-text-secondary);
   }
 
   .proto-table :global(td) {
-    border: 1px solid #f3f4f6;
+    border: 1px solid var(--color-border-light);
     padding: 8px;
     text-align: left;
-  }
-
-  .proto-table th {
-    background: #f9fafb;
-    font-weight: 600;
-    color: #4b5563;
   }
 
   .modal-overlay {
@@ -552,14 +659,14 @@
   }
 
   .modal-content {
-    background: white;
+    background: var(--color-bg-primary);
     border-radius: 8px;
     width: 90%;
     max-width: 600px;
     max-height: 80%;
     display: flex;
     flex-direction: column;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
   }
 
   .modal-header {
@@ -567,22 +674,22 @@
     justify-content: space-between;
     align-items: center;
     padding: 12px 16px;
-    border-bottom: 1px solid #e5e7eb;
+    border-bottom: 1px solid var(--color-border);
     font-weight: 600;
-    color: #374151;
+    color: var(--color-text-primary);
   }
 
   .modal-close {
     background: none;
     border: none;
     font-size: 16px;
-    color: #9ca3af;
+    color: var(--color-text-tertiary);
     cursor: pointer;
     padding: 4px 8px;
   }
 
   .modal-close:hover {
-    color: #374151;
+    color: var(--color-text-primary);
   }
 
   .copy-textarea {
@@ -591,21 +698,21 @@
     padding: 12px;
     font-family: monospace;
     font-size: 12px;
-    border: 1px solid #e5e7eb;
+    border: 1px solid var(--color-border);
     border-radius: 4px;
     resize: none;
     min-height: 200px;
-    background: #f9fafb;
+    background: var(--color-bg-secondary);
+    color: var(--color-text-primary);
   }
 
   .modal-hint {
     padding: 8px 16px 16px;
     font-size: 12px;
-    color: #6b7280;
+    color: var(--color-text-secondary);
     text-align: center;
   }
 
-  /* 合併視圖樣式 */
   .combined-view {
     padding: 8px;
   }
@@ -616,8 +723,7 @@
 
   .combined-divider {
     height: 1px;
-    background: linear-gradient(to right, transparent, #e5e7eb, transparent);
+    background: linear-gradient(to right, transparent, var(--color-border), transparent);
     margin: 20px 0;
   }
-
 </style>
