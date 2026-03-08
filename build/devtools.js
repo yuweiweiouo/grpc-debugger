@@ -107,7 +107,7 @@ chrome.runtime.onMessage.addListener((message) => {
     // 定期清理
     const now = Date.now();
     for (const [path, queue] of capturedBodies.entries()) {
-      const filtered = queue.filter(q => now - q.timestamp < 60000);
+      const filtered = queue.filter(q => now - q.timestamp < ENTRY_CACHE_TTL_MS);
       if (filtered.length === 0) {
         capturedBodies.delete(path);
       } else {
@@ -125,6 +125,9 @@ chrome.runtime.onMessage.addListener((message) => {
 // ============================================================================
 
 const POLL_INTERVAL_MS = 300;
+const MAX_MATCH_RETRIES = 30;
+const MATCH_RETRY_DELAY_MS = 100;
+const ENTRY_CACHE_TTL_MS = 60000;
 
 /**
  * 透過 inspectedWindow.eval 在頁面注入 postMessage 監聽器
@@ -234,9 +237,8 @@ function processEntry(entry) {
     // v2.23: 使用 FIFO 策略 - 直接取隊列第一個
     // 前提假設：同一 path 的攔截順序 = HAR 觸發順序
     let retryCount = 0;
-    const maxRetries = 30;
     
-    while (retryCount < maxRetries) {
+    while (retryCount < MAX_MATCH_RETRIES) {
       const queue = capturedBodies.get(fuzzyUrl);
       if (queue && queue.length > 0) {
         captured = queue.shift(); // FIFO: 取出第一個
@@ -246,7 +248,7 @@ function processEntry(entry) {
       
       if (!entry.request.postData) break;
       
-      await new Promise(res => setTimeout(res, 100));
+      await new Promise(res => setTimeout(res, MATCH_RETRY_DELAY_MS));
       retryCount++;
     }
 

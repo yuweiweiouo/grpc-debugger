@@ -69,6 +69,16 @@ export const translations = {
     source_postmessage_desc: 'Receive decoded calls from frontend interceptors.',
     source_reflection: 'Reflection (HAR)',
     source_reflection_desc: 'Decode binary data using gRPC Server Reflection.',
+    appearance: 'Appearance',
+    theme_light: 'Light',
+    theme_dark: 'Dark',
+    theme_system: 'System',
+    search_in_data: 'Search in data...',
+    replay: 'Replay',
+    replaying: 'Replaying...',
+    replay_success: 'Replay completed',
+    replay_failed: 'Replay failed',
+    replay_no_data: 'No request data to replay',
   },
   zh: {
     network: '網路紀錄',
@@ -133,6 +143,16 @@ export const translations = {
     source_postmessage_desc: '接收前端 Interceptor 已解碼的呼叫資料。',
     source_reflection: 'Reflection（HAR 解碼）',
     source_reflection_desc: '透過 gRPC Server Reflection 解碼二進位資料。',
+    appearance: '外觀',
+    theme_light: '淺色',
+    theme_dark: '深色',
+    theme_system: '跟隨系統',
+    search_in_data: '搜尋資料...',
+    replay: '重播請求',
+    replaying: '重播中...',
+    replay_success: '重播完成',
+    replay_failed: '重播失敗',
+    replay_no_data: '無可重播的請求資料',
   }
 };
 

@@ -96,7 +96,7 @@
     padding: 24px;
     height: 100%;
     overflow-y: auto;
-    background: #f9fafb;
+    background: var(--color-bg-secondary);
   }
 
   header {
@@ -110,7 +110,7 @@
     display: flex;
     align-items: center;
     gap: 12px;
-    color: #111827;
+    color: var(--color-text-primary);
   }
 
   h2 {
@@ -130,18 +130,18 @@
   }
 
   .status-badge.loading {
-    background: #eff6ff;
-    color: #2563eb;
+    background: var(--color-primary-bg);
+    color: var(--color-primary);
   }
 
   .status-badge.success {
-    background: #ecfdf5;
-    color: #059669;
+    background: var(--color-success-bg);
+    color: var(--color-success);
   }
 
   .status-badge.error {
-    background: #fef2f2;
-    color: #dc2626;
+    background: var(--color-error-bg);
+    color: var(--color-error);
   }
 
   @keyframes spin {
@@ -164,8 +164,8 @@
   }
 
   .service-card {
-    background: white;
-    border: 1px solid #e5e7eb;
+    background: var(--color-bg-primary);
+    border: 1px solid var(--color-border);
     border-radius: 12px;
     padding: 20px;
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
@@ -187,7 +187,7 @@
 
   .pkg {
     font-size: 10px;
-    color: #6b7280;
+    color: var(--color-text-secondary);
     font-family: monospace;
     white-space: nowrap;
     overflow: hidden;
@@ -197,12 +197,12 @@
   h3 {
     margin: 0 0 16px 0;
     font-size: 16px;
-    color: #111827;
+    color: var(--color-text-primary);
     transition: color 0.2s;
   }
 
   h3.muted {
-    color: #9ca3af;
+    color: var(--color-text-tertiary);
   }
 
   .visibility-toggle {
@@ -215,23 +215,23 @@
     background: transparent;
     border: none;
     border-radius: 4px;
-    color: #9ca3af;
+    color: var(--color-text-tertiary);
     cursor: pointer;
     transition: all 0.2s;
   }
 
   .visibility-toggle:hover {
-    background: #f3f4f6;
-    color: #8b5cf6;
+    background: var(--color-bg-hover);
+    color: var(--color-purple);
   }
 
   .visibility-toggle.hidden {
-    color: #ef4444;
+    color: var(--color-error);
   }
 
   .visibility-toggle.hidden:hover {
-    background: #fef2f2;
-    color: #dc2626;
+    background: var(--color-error-bg);
+    color: var(--color-error);
   }
 
   .methods {
@@ -242,22 +242,22 @@
 
   .method-chip {
     font-size: 10px;
-    background: #f3f4f6;
-    color: #4b5563;
+    background: var(--color-bg-tertiary);
+    color: var(--color-text-secondary);
     padding: 2px 8px;
     border-radius: 4px;
-    border: 1px solid #e5e7eb;
+    border: 1px solid var(--color-border);
   }
 
   .empty-state {
     grid-column: 1 / -1;
     text-align: center;
     padding: 100px 20px;
-    color: #9ca3af;
+    color: var(--color-text-tertiary);
   }
 
   .hint {
     font-size: 12px;
-    color: #d1d5db;
+    color: var(--color-border);
   }
 </style>

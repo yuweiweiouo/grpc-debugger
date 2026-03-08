@@ -106,28 +106,28 @@
 <style>
   .proto-row td {
     padding: 8px 12px;
-    border-bottom: 1px solid #f3f4f6;
+    border-bottom: 1px solid var(--color-border-light);
     font-size: 12px;
   }
 
   .proto-row.nested td {
-    background: #fafbfc;
+    background: var(--color-bg-secondary);
   }
 
   .col-num {
     width: 50px;
     text-align: center;
-    color: #9ca3af;
+    color: var(--color-text-tertiary);
     font-weight: 500;
   }
 
   .col-name {
     font-weight: 500;
-    color: #374151;
+    color: var(--color-text-primary);
   }
 
   .col-type {
-    color: #6b7280;
+    color: var(--color-text-secondary);
   }
 
   .type-link {
@@ -135,7 +135,7 @@
     border: none;
     padding: 0;
     font: inherit;
-    color: #2563eb;
+    color: var(--color-primary);
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -148,11 +148,11 @@
 
   .arrow {
     font-size: 10px;
-    color: #9ca3af;
+    color: var(--color-text-tertiary);
     width: 12px;
   }
 
   .type-plain {
-    color: #6b7280;
+    color: var(--color-text-secondary);
   }
 </style>

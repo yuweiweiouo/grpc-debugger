@@ -48,8 +48,8 @@
 <style>
   .sidebar {
     width: 64px;
-    background: #ffffff;
-    border-right: 1px solid #e5e7eb;
+    background: var(--color-bg-primary);
+    border-right: 1px solid var(--color-border);
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -71,7 +71,7 @@
   .version {
     font-size: 9px;
     font-weight: bold;
-    color: #9ca3af;
+    color: var(--color-text-tertiary);
     margin-top: 2px;
     text-align: center;
     opacity: 0.5;
@@ -82,7 +82,7 @@
     border: none;
     padding: 12px;
     border-radius: 12px;
-    color: #6b7280;
+    color: var(--color-text-secondary);
     cursor: pointer;
     transition: all 0.2s;
     display: flex;
@@ -91,12 +91,12 @@
   }
 
   button:hover {
-    background: #f3f4f6;
-    color: #111827;
+    background: var(--color-bg-hover);
+    color: var(--color-text-primary);
   }
 
   button.active {
-    background: #eff6ff;
-    color: #2563eb;
+    background: var(--color-primary-bg);
+    color: var(--color-primary);
   }
 </style>

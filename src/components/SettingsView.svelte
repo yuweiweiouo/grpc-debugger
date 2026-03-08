@@ -1,13 +1,8 @@
 <script>
-  /**
-   * 設定頁面 (Settings View)
-   *
-   * 管理應用程序的全域偏好設定，例如語系與佈景主題。
-   */
-  import { language, combinedView } from "../stores/settings";
+  import { language, combinedView, theme } from "../stores/settings";
   import { t } from "../lib/i18n";
   import { APP_VERSION, APP_NAME } from "../lib/version";
-  import { Settings, Globe, Bug, Layout } from "lucide-svelte";
+  import { Settings, Globe, Bug, Layout, Palette } from "lucide-svelte";
 
   function setLanguage(lang) {
     language.set(lang);
@@ -15,6 +10,10 @@
 
   function toggleCombinedView() {
     combinedView.update((v) => !v);
+  }
+
+  function setTheme(val) {
+    theme.set(val);
   }
 
   function openIssue() {
@@ -35,6 +34,34 @@
 
   <div class="settings-content">
     <section class="card">
+      <div class="card-title">
+        <Palette size={18} />
+        <h3>{$t("appearance")}</h3>
+      </div>
+
+      <div class="lang-options">
+        <button
+          class:active={$theme === "light"}
+          on:click={() => setTheme("light")}
+        >
+          ☀️ {$t("theme_light")}
+        </button>
+        <button
+          class:active={$theme === "dark"}
+          on:click={() => setTheme("dark")}
+        >
+          🌙 {$t("theme_dark")}
+        </button>
+        <button
+          class:active={$theme === "system"}
+          on:click={() => setTheme("system")}
+        >
+          💻 {$t("theme_system")}
+        </button>
+      </div>
+    </section>
+
+    <section class="card" style="margin-top: 16px;">
       <div class="card-title">
         <Globe size={18} />
         <h3>{$t("language")}</h3>
@@ -98,7 +125,7 @@
     padding: 24px;
     height: 100%;
     overflow-y: auto;
-    background: #f9fafb;
+    background: var(--color-bg-secondary);
   }
 
   header {
@@ -109,7 +136,7 @@
     display: flex;
     align-items: center;
     gap: 12px;
-    color: #111827;
+    color: var(--color-text-primary);
   }
 
   h2 {
@@ -123,8 +150,8 @@
   }
 
   .card {
-    background: white;
-    border: 1px solid #e5e7eb;
+    background: var(--color-bg-primary);
+    border: 1px solid var(--color-border);
     border-radius: 12px;
     padding: 20px;
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
@@ -135,7 +162,7 @@
     align-items: center;
     gap: 10px;
     margin-bottom: 20px;
-    color: #374151;
+    color: var(--color-text-primary);
   }
 
   h3 {
@@ -152,24 +179,24 @@
   button {
     flex: 1;
     padding: 10px;
-    border: 1px solid #e5e7eb;
-    background: white;
+    border: 1px solid var(--color-border);
+    background: var(--color-bg-primary);
     border-radius: 8px;
     font-size: 14px;
-    color: #4b5563;
+    color: var(--color-text-secondary);
     cursor: pointer;
     transition: all 0.2s;
   }
 
   button:hover {
-    border-color: #d1d5db;
-    background: #f9fafb;
+    border-color: var(--color-text-tertiary);
+    background: var(--color-bg-secondary);
   }
 
   button.active {
-    background: #eff6ff;
-    border-color: #2563eb;
-    color: #2563eb;
+    background: var(--color-primary-bg);
+    border-color: var(--color-primary);
+    color: var(--color-primary);
     font-weight: 500;
   }
 
@@ -189,12 +216,12 @@
   .toggle-label {
     font-size: 14px;
     font-weight: 500;
-    color: #374151;
+    color: var(--color-text-primary);
   }
 
   .toggle-desc {
     font-size: 12px;
-    color: #6b7280;
+    color: var(--color-text-secondary);
   }
 
   .toggle-switch {
@@ -204,22 +231,22 @@
     flex: none;
     padding: 0;
     border-radius: 12px;
-    background: #e5e7eb;
+    background: var(--color-border);
     border: none;
     cursor: pointer;
     transition: background 0.2s;
   }
 
   .toggle-switch.active {
-    background: #3b82f6;
+    background: var(--color-primary);
   }
 
   .toggle-switch:hover {
-    background: #d1d5db;
+    background: var(--color-text-tertiary);
   }
 
   .toggle-switch.active:hover {
-    background: #2563eb;
+    background: var(--color-primary-dark);
   }
 
   .toggle-knob {
@@ -241,26 +268,26 @@
   .description {
     margin: 0 0 16px 0;
     font-size: 13px;
-    color: #6b7280;
+    color: var(--color-text-secondary);
     line-height: 1.5;
   }
 
   .report-btn {
     width: 100%;
-    background: #3b82f6;
-    border-color: #3b82f6;
+    background: var(--color-primary);
+    border-color: var(--color-primary);
     color: white;
   }
 
   .report-btn:hover {
-    background: #2563eb;
-    border-color: #2563eb;
+    background: var(--color-primary-dark);
+    border-color: var(--color-primary-dark);
   }
 
   .version {
     margin-top: 32px;
     text-align: center;
     font-size: 12px;
-    color: #9ca3af;
+    color: var(--color-text-tertiary);
   }
 </style>
