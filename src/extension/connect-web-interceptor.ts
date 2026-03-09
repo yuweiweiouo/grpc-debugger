@@ -1,3 +1,4 @@
+// @ts-nocheck
 // gRPC Debugger - Connect-Web Integration
 // All request interception is handled by chrome.debugger in background.js.
 // This script provides an optional API for frontend to register proto definitions.

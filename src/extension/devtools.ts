@@ -1,3 +1,4 @@
+// @ts-nocheck
 /* global chrome */
 // DevTools Entry Point - gRPC Debugger v2.24
 // 使用 FIFO + Path 策略匹配，無 pending 條目（避免 Race Condition）

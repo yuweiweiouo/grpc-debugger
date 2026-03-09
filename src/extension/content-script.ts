@@ -1,3 +1,4 @@
+// @ts-nocheck
 /* global chrome */
 /**
  * gRPC Debugger 1.0 - Content Script

@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * gRPC Debugger - Robust Interceptor v2.23 (Ironclad)
  * 攔截 fetch 與 XHR 請求，包含版本化日誌與同步 XHR 支援

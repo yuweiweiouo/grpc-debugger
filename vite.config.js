@@ -2,8 +2,35 @@ import { defineConfig } from 'vite';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import { resolve } from 'path';
 
+function extensionScripts() {
+  return {
+    name: 'build-extension-scripts',
+    async writeBundle() {
+      const { build } = await import('esbuild');
+      const scripts = [
+        'background',
+        'content-script',
+        'devtools',
+        'fetch-interceptor',
+        'grpc-web-injector',
+        'connect-web-interceptor',
+      ];
+      for (const name of scripts) {
+        await build({
+          entryPoints: [`src/extension/${name}.ts`],
+          bundle: true,
+          format: 'iife',
+          outfile: `build/${name}.js`,
+          target: 'es2020',
+          minify: true,
+        });
+      }
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [svelte()],
+  plugins: [svelte(), extensionScripts()],
   build: {
     rollupOptions: {
       input: {
