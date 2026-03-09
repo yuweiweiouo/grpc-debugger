@@ -157,10 +157,6 @@
     color: var(--color-text-primary);
   }
 
-  .icon-btn.active {
-    background: var(--color-primary-bg);
-    color: var(--color-primary);
-  }
 
   .right {
     display: flex;

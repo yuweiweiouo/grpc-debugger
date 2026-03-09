@@ -19,6 +19,58 @@
   let copyFeedback = "";
   let searchQuery = "";
   let replayStatus = "";
+  let currentMatchIndex = 0;
+
+  function collectMatches(obj, query, prefix = '') {
+    const results = [];
+    if (!query || !obj || typeof obj !== 'object' || obj instanceof Uint8Array) return results;
+    const q = query.toLowerCase();
+    for (const key of Object.keys(obj)) {
+      if (key === '$typeName') continue;
+      const path = prefix ? `${prefix}.${key}` : key;
+      if (key.toLowerCase().includes(q)) results.push(path + ':key');
+      const val = obj[key];
+      if (val !== null && val !== undefined) {
+        if (typeof val === 'object' && !(val instanceof Uint8Array)) {
+          results.push(...collectMatches(val, query, path));
+        } else {
+          const str = typeof val === 'string' ? `"${val}"` : String(val);
+          if (str.toLowerCase().includes(q)) results.push(path + ':value');
+        }
+      }
+    }
+    return results;
+  }
+
+  $: reqMatches = searchQuery && entry?.request ? collectMatches(entry.request, searchQuery) : [];
+  $: resMatches = searchQuery && entry?.response ? collectMatches(entry.response, searchQuery) : [];
+  $: matches = activeTab === 'request' ? reqMatches
+             : activeTab === 'response' ? resMatches
+             : [...reqMatches, ...resMatches];
+  $: totalMatches = matches.length;
+  $: safeIndex = totalMatches > 0 ? Math.min(currentMatchIndex, totalMatches - 1) : 0;
+  $: activePath = totalMatches > 0 ? matches[safeIndex] : null;
+  $: activeInReq = activeTab === 'data' && activePath ? safeIndex < reqMatches.length : false;
+
+  $: if (searchQuery) currentMatchIndex = 0;
+  $: if (activeTab) currentMatchIndex = 0;
+
+  function goNext() {
+    if (totalMatches === 0) return;
+    currentMatchIndex = (safeIndex + 1) % totalMatches;
+  }
+
+  function goPrev() {
+    if (totalMatches === 0) return;
+    currentMatchIndex = (safeIndex - 1 + totalMatches) % totalMatches;
+  }
+
+  function handleSearchKeyDown(e) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (e.shiftKey) goPrev(); else goNext();
+    }
+  }
 
   // 反應式數據流：當 Store 中的 selectedEntry 改變時，自動重新計算相應的 Proto 定義與訊息結構
   $: entry = $selectedEntry;
@@ -260,7 +312,14 @@
             <span>Request Data</span>
             {#if entry.request}
               <div class="header-actions">
-                <input class="search-input" type="text" placeholder={$t('search_in_data')} bind:value={searchQuery} />
+                <div class="search-nav">
+                  <input class="search-input" type="text" placeholder={$t('search_in_data')} bind:value={searchQuery} on:keydown={handleSearchKeyDown} />
+                  {#if searchQuery}
+                    <span class="match-counter">{totalMatches > 0 ? `${safeIndex + 1}/${totalMatches}` : '0/0'}</span>
+                    <button class="nav-btn" on:click={goPrev} disabled={totalMatches === 0} title="Previous (Shift+Enter)">▲</button>
+                    <button class="nav-btn" on:click={goNext} disabled={totalMatches === 0} title="Next (Enter)">▼</button>
+                  {/if}
+                </div>
                 <button class="copy-btn" on:click={() => handleCopy(entry.request)}>
                   {$t("copy_json")}
                 </button>
@@ -268,7 +327,7 @@
             {/if}
           </div>
           {#if entry.request}
-            <JsonTree data={entry.request} {searchQuery} />
+            <JsonTree data={entry.request} {searchQuery} {activePath} currentPath="" />
           {:else}
             <div class="no-data">{$t("no_data")}</div>
           {/if}
@@ -279,7 +338,14 @@
             <span>Response Data</span>
             {#if entry.response}
               <div class="header-actions">
-                <input class="search-input" type="text" placeholder={$t('search_in_data')} bind:value={searchQuery} />
+                <div class="search-nav">
+                  <input class="search-input" type="text" placeholder={$t('search_in_data')} bind:value={searchQuery} on:keydown={handleSearchKeyDown} />
+                  {#if searchQuery}
+                    <span class="match-counter">{totalMatches > 0 ? `${safeIndex + 1}/${totalMatches}` : '0/0'}</span>
+                    <button class="nav-btn" on:click={goPrev} disabled={totalMatches === 0} title="Previous (Shift+Enter)">▲</button>
+                    <button class="nav-btn" on:click={goNext} disabled={totalMatches === 0} title="Next (Enter)">▼</button>
+                  {/if}
+                </div>
                 <button class="copy-btn" on:click={() => handleCopy(entry.response)}>
                   {$t("copy_json")}
                 </button>
@@ -287,7 +353,7 @@
             {/if}
           </div>
           {#if entry.response}
-            <JsonTree data={entry.response} {searchQuery} />
+            <JsonTree data={entry.response} {searchQuery} {activePath} currentPath="" />
           {:else if entry.status === "pending"}
             <div class="no-data">Waiting for response...</div>
           {:else}
@@ -302,7 +368,14 @@
               <span>📤 {$t("request")}</span>
               {#if entry.request}
                 <div class="header-actions">
-                  <input class="search-input" type="text" placeholder={$t('search_in_data')} bind:value={searchQuery} />
+                  <div class="search-nav">
+                    <input class="search-input" type="text" placeholder={$t('search_in_data')} bind:value={searchQuery} on:keydown={handleSearchKeyDown} />
+                    {#if searchQuery}
+                      <span class="match-counter">{totalMatches > 0 ? `${safeIndex + 1}/${totalMatches}` : '0/0'}</span>
+                      <button class="nav-btn" on:click={goPrev} disabled={totalMatches === 0}>▲</button>
+                      <button class="nav-btn" on:click={goNext} disabled={totalMatches === 0}>▼</button>
+                    {/if}
+                  </div>
                   <button class="copy-btn" on:click={() => handleCopy(entry.request)}>
                     {$t("copy_json")}
                   </button>
@@ -310,7 +383,7 @@
               {/if}
             </div>
             {#if entry.request}
-              <JsonTree data={entry.request} {searchQuery} />
+              <JsonTree data={entry.request} {searchQuery} activePath={activeInReq ? activePath : null} currentPath="" />
             {:else}
               <div class="no-data">{$t("no_data")}</div>
             {/if}
@@ -330,7 +403,7 @@
               {/if}
             </div>
             {#if entry.response}
-              <JsonTree data={entry.response} {searchQuery} />
+              <JsonTree data={entry.response} {searchQuery} activePath={!activeInReq ? activePath : null} currentPath="" />
             {:else if entry.status === "pending"}
               <div class="no-data">Waiting for response...</div>
             {:else}
@@ -536,6 +609,10 @@
     padding: 8px 0;
     border-bottom: 1px solid var(--color-border-light);
     margin-bottom: 12px;
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    background: var(--color-bg-primary);
   }
 
   .data-header span {
@@ -550,20 +627,63 @@
     align-items: center;
   }
 
-  .search-input {
+  .search-nav {
+    display: flex;
+    align-items: center;
+    gap: 4px;
     background: var(--color-bg-tertiary, #f3f4f6);
     border: 1px solid var(--color-border);
     border-radius: 6px;
-    padding: 4px 8px;
-    font-size: 12px;
-    color: var(--color-text-primary);
-    width: 160px;
-    outline: none;
+    padding: 2px 4px;
     transition: border-color 0.2s;
   }
 
-  .search-input:focus {
+  .search-nav:focus-within {
     border-color: var(--color-primary);
+  }
+
+  .search-input {
+    background: transparent;
+    border: none;
+    padding: 2px 4px;
+    font-size: 12px;
+    color: var(--color-text-primary);
+    width: 120px;
+    outline: none;
+  }
+
+  .match-counter {
+    font-size: 11px;
+    color: var(--color-text-tertiary);
+    font-family: monospace;
+    white-space: nowrap;
+    padding: 0 2px;
+    min-width: 32px;
+    text-align: center;
+  }
+
+  .nav-btn {
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    font-size: 10px;
+    color: var(--color-text-secondary);
+    padding: 2px 4px;
+    border-radius: 3px;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .nav-btn:hover:not(:disabled) {
+    background: var(--color-bg-hover);
+    color: var(--color-text-primary);
+  }
+
+  .nav-btn:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
   }
 
   .copy-btn {
