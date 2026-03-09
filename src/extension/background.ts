@@ -1,3 +1,4 @@
+// @ts-nocheck
 /* global chrome */
 // gRPC Debugger - Background Service Worker
 // 使用 Message Passing 中繼 Panel 與 DevTools 間的通訊

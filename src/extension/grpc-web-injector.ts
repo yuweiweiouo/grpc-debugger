@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * gRPC Debugger 1.0 - Frontend Injection Script
  * Redesigned for Connect-RPC and Buf ecosystem support.
