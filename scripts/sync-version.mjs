@@ -4,7 +4,7 @@ import path from 'node:path';
 const root = process.cwd();
 const packageJsonPath = path.join(root, 'package.json');
 const manifestPath = path.join(root, 'public', 'manifest.json');
-const appVersionPath = path.join(root, 'src', 'lib', 'version.js');
+const appVersionPath = path.join(root, 'src', 'lib', 'version.ts');
 
 const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
 const version = packageJson.version;
@@ -23,7 +23,7 @@ const updatedVersionFile = appVersionFile.replace(
   `export const APP_VERSION = '${version}';`
 );
 if (updatedVersionFile === appVersionFile) {
-  throw new Error('APP_VERSION constant not found in src/lib/version.js');
+  throw new Error('APP_VERSION constant not found in src/lib/version.ts');
 }
 fs.writeFileSync(appVersionPath, updatedVersionFile, 'utf8');
 

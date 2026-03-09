@@ -6,39 +6,68 @@
    * 1. 條列式顯示所有經過過濾的 gRPC 請求。
    * 2. 透過顏色小點 (Dot) 反映請求的即時狀態 (Pending, Success, Error)。
    * 3. 實作「自動滾動到底部」邏輯，方便使用者追蹤最新的請求。
+   * 4. 虛擬捲動：僅渲染可視範圍 DOM，大量請求下維持 60fps。
    */
   import { afterUpdate } from "svelte";
-  import { filteredLog, selectedIdx } from "../stores/network";
+  import { filteredLog, selectedIdx, filterValue } from "../stores/network";
   import { t } from "../lib/i18n";
+
+  const ROW_HEIGHT = 37;
+  const BUFFER = 10;
 
   let listContainer;
   let shouldAutoScroll = true;
+  let scrollTop = 0;
+  let containerHeight = 400;
+
+  function escapeHtml(str) {
+    return String(str ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  function highlightText(text, query) {
+    const escaped = escapeHtml(text);
+    if (!query) return escaped;
+    const escapedQuery = escapeHtml(query);
+    const regex = new RegExp(
+      `(${escapedQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`,
+      'gi'
+    );
+    return escaped.replace(regex, '<mark class="search-highlight">$1</mark>');
+  }
+
+  $: totalItems = $filteredLog.length;
+  $: startIndex = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - BUFFER);
+  $: endIndex = Math.min(
+    totalItems,
+    Math.ceil((scrollTop + containerHeight) / ROW_HEIGHT) + BUFFER
+  );
+  $: visibleItems = $filteredLog.slice(startIndex, endIndex);
+  $: paddingTop = startIndex * ROW_HEIGHT;
+  $: paddingBottom = Math.max(0, (totalItems - endIndex) * ROW_HEIGHT);
 
   function handleSelect(idx) {
     selectedIdx.set(idx);
   }
 
-  function handleKeyDown(e, i) {
+  function handleKeyDown(e, idx) {
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
-      handleSelect(i);
+      handleSelect(idx);
     }
   }
 
-  /**
-   * 滾動偵聽：判斷使用者是否手動往上捲動
-   * 若使用者手動往上捲，則暫時停止自動滾動，避免干擾閱讀舊紀錄。
-   */
-  function handleScroll() {
+  function onScroll() {
     if (!listContainer) return;
-    const { scrollTop, scrollHeight, clientHeight } = listContainer;
-    // 允許 5px 誤差以判定是否在底部
-    shouldAutoScroll = scrollHeight - scrollTop - clientHeight < 5;
+    const { scrollTop: st, scrollHeight, clientHeight: ch } = listContainer;
+    shouldAutoScroll = scrollHeight - st - ch < 5;
+    scrollTop = st;
+    containerHeight = ch;
   }
 
-  /**
-   * 生命週期：資料更新後若處於「跟隨模式」，則強制滾動到最下方。
-   */
   afterUpdate(() => {
     if (shouldAutoScroll && listContainer) {
       listContainer.scrollTop = listContainer.scrollHeight;
@@ -47,8 +76,7 @@
 
   function formatStartTime(ts) {
     if (!ts) return "";
-    const date = new Date(ts);
-    return date.toLocaleTimeString([], {
+    return new Date(ts).toLocaleTimeString([], {
       hour12: false,
       hour: "2-digit",
       minute: "2-digit",
@@ -57,51 +85,63 @@
   }
 </script>
 
-<div class="network-list" bind:this={listContainer} on:scroll={handleScroll}>
-  {#each $filteredLog as entry, i}
-    <div
-      class="row"
-      class:selected={$selectedIdx === i}
-      on:click={() => handleSelect(i)}
-      on:keydown={(e) => handleKeyDown(e, i)}
-      role="button"
-      tabindex="0"
-    >
-      <div class="method-col">
-        <span
-          class="dot"
-          class:success={entry.status === "finished" && entry.grpcStatus === 0}
-          class:error={entry.status === "finished" && entry.grpcStatus > 0}
-          class:pending={entry.status === "pending"}
-        ></span>
+<div
+  class="network-list"
+  bind:this={listContainer}
+  bind:clientHeight={containerHeight}
+  on:scroll={onScroll}
+>
+  <div
+    style="padding-top: {paddingTop}px; padding-bottom: {paddingBottom}px;"
+  >
+    {#each visibleItems as entry, i (entry.id ?? startIndex + i)}
+      {@const realIdx = startIndex + i}
+      <div
+        class="row"
+        class:selected={$selectedIdx === realIdx}
+        on:click={() => handleSelect(realIdx)}
+        on:keydown={(e) => handleKeyDown(e, realIdx)}
+        role="button"
+        tabindex="0"
+      >
+        <div class="method-col">
+          <span
+            class="dot"
+            class:success={entry.status === "finished" && entry.grpcStatus === 0}
+            class:error={entry.status === "finished" && entry.grpcStatus > 0}
+            class:pending={entry.status === "pending"}
+          ></span>
 
-        {#if entry._source === "interceptor"}
-          <span class="source-tag source-p" title="PostMessage">P</span>
-        {:else}
-          <span class="source-tag source-r" title="Reflection">R</span>
-        {/if}
+          {#if entry._source === "interceptor"}
+            <span class="source-tag source-p" title="PostMessage">P</span>
+          {:else}
+            <span class="source-tag source-r" title="Reflection">R</span>
+          {/if}
 
-        <span
-          class="method-name"
-          class:pending-text={entry.status === "pending"}
-        >
-          {entry.method.split("/").pop()}
-        </span>
+          <span
+            class="method-name"
+            class:pending-text={entry.status === "pending"}
+          >
+            <!-- svelte-ignore html_dangerous_html_in_svelte_html -->
+            {@html highlightText(entry.method.split("/").pop(), $filterValue)}
+          </span>
+        </div>
+
+        <div class="meta-col">
+          <span class="time">
+            {entry.duration
+              ? `${Number(entry.duration).toFixed(2)}ms`
+              : entry.status === "pending"
+                ? "..."
+                : ""}
+          </span>
+          <span class="start-time">{formatStartTime(entry.startTime)}</span>
+        </div>
       </div>
-      <div class="meta-col">
-        <span class="time">
-          {entry.duration
-            ? `${Number(entry.duration).toFixed(2)}ms`
-            : entry.status === "pending"
-              ? "..."
-              : ""}
-        </span>
-        <span class="start-time">{formatStartTime(entry.startTime)}</span>
-      </div>
-    </div>
-  {/each}
+    {/each}
+  </div>
 
-  {#if $filteredLog.length === 0}
+  {#if totalItems === 0}
     <div class="empty">
       <p>{$t("no_requests")}</p>
     </div>
@@ -117,14 +157,23 @@
     height: 100%;
   }
 
+  :global(.search-highlight) {
+    background: var(--color-highlight, #fef08a);
+    border-radius: 2px;
+    padding: 0 1px;
+    color: inherit;
+  }
+
   .row {
     display: flex;
     align-items: center;
     gap: 16px;
     padding: 8px 12px;
+    height: 37px;
+    box-sizing: border-box;
     border-bottom: 1px solid var(--color-border-light);
     cursor: pointer;
-    transition: background 0.2s;
+    transition: background 0.15s;
   }
 
   .row:hover {
@@ -187,18 +236,9 @@
   }
 
   @keyframes pulse {
-    0% {
-      transform: scale(1);
-      opacity: 1;
-    }
-    50% {
-      transform: scale(1.3);
-      opacity: 0.5;
-    }
-    100% {
-      transform: scale(1);
-      opacity: 1;
-    }
+    0% { transform: scale(1); opacity: 1; }
+    50% { transform: scale(1.3); opacity: 0.5; }
+    100% { transform: scale(1); opacity: 1; }
   }
 
   .pending-text {
