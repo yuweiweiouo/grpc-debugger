@@ -9,6 +9,7 @@ import {
   decodePolledCalls,
   EMPTY_POLL_RESULT,
 } from './devtools-polling.ts';
+import { PAGE_MANAGED_CALL_QUEUE_FLAG } from './call-queue-mode.ts';
 
 /**
  * 檢查是否為 gRPC-Web 請求
@@ -149,6 +150,10 @@ function injectCallCaptureListener() {
   chrome.devtools.inspectedWindow.eval(`
     (function() {
       if (window.__GRPC_DEBUGGER_LISTENER_INJECTED__) return;
+      if (window['${PAGE_MANAGED_CALL_QUEUE_FLAG}']) {
+        window.__GRPC_DEBUGGER_LISTENER_INJECTED__ = true;
+        return;
+      }
       window.__GRPC_DEBUGGER_LISTENER_INJECTED__ = true;
       window.__GRPC_CALLS_QUEUE__ = [];
       
