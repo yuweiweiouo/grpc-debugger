@@ -435,6 +435,7 @@
   // ============================================================================
 
   window.__GRPC_CALLS_QUEUE__ = window.__GRPC_CALLS_QUEUE__ || [];
+  window[PAGE_MANAGED_CALL_QUEUE_FLAG] = true;
 
   /**
    * 將 call data 推入佇列，供 devtools.js 透過 inspectedWindow.eval 讀取
@@ -561,3 +562,4 @@
 
   window.dispatchEvent(new CustomEvent("grpc-web-dev-tools-ready"));
 })();
+import { PAGE_MANAGED_CALL_QUEUE_FLAG } from './call-queue-mode.ts';
