@@ -11,6 +11,9 @@ import { writable, derived, get } from 'svelte/store';
 import { protoEngine } from '../lib/proto-engine';
 import { tryAutoReflection, hasReflected, services } from './schema';
 import { enablePostMessage, enableReflection } from './settings';
+import { createLogger } from '../lib/logger';
+
+const logger = createLogger('Network');
 
 // 原始日誌陣列
 export const log = writable([]);
@@ -86,16 +89,12 @@ export async function addLog(entry) {
   
   // 合併與更新邏輯 (Prevent Duplicates)
   log.update(list => {
-    // v2.23: 只使用精確 ID 匹配
     const existingIdx = list.findIndex(e => e.id === entry.id);
-    
-    // 診斷日誌
-    console.log(`[gRPC Debugger] addLog: id=${entry.id}, status=${entry.status}, source=${entry._source || 'har'}, existingIdx=${existingIdx}, listSize=${list.length}`);
+    logger.debug('addLog:', { id: entry.id, status: entry.status, source: entry._source || 'har', existingIdx, listSize: list.length });
 
     if (existingIdx !== -1) {
       const newList = [...list];
-      console.log(`[gRPC Debugger] Merging entry: ${entry.id} (${newList[existingIdx].status} -> ${entry.status})`);
-      // 合併數據：保留已有的攔截數據，並補全剩餘資訊
+      logger.debug('Merging entry:', entry.id, newList[existingIdx].status, '->', entry.status);
       newList[existingIdx] = { 
         ...newList[existingIdx], 
         ...entry,
@@ -105,7 +104,7 @@ export async function addLog(entry) {
       };
       return newList;
     }
-    console.log(`[gRPC Debugger] New entry: ${entry.id}`);
+    logger.debug('New entry:', entry.id);
     return [...list, entry];
   });
 
