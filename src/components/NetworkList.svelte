@@ -9,7 +9,7 @@
    * 4. 虛擬捲動：僅渲染可視範圍 DOM，大量請求下維持 60fps。
    */
   import { afterUpdate } from "svelte";
-  import { filteredLog, selectedIdx, filterValue } from "../stores/network";
+  import { filteredLog, selectedId, filterValue } from "../stores/network";
   import { t } from "../lib/i18n";
   import { normalizeTimestampMs } from "../lib/time";
 
@@ -50,14 +50,14 @@
   $: paddingTop = startIndex * ROW_HEIGHT;
   $: paddingBottom = Math.max(0, (totalItems - endIndex) * ROW_HEIGHT);
 
-  function handleSelect(idx) {
-    selectedIdx.set(idx);
+  function handleSelect(entry) {
+    selectedId.set(entry?.id ?? null);
   }
 
-  function handleKeyDown(e, idx) {
+  function handleKeyDown(e, entry) {
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
-      handleSelect(idx);
+      handleSelect(entry);
     }
   }
 
@@ -97,12 +97,11 @@
     style="padding-top: {paddingTop}px; padding-bottom: {paddingBottom}px;"
   >
     {#each visibleItems as entry, i (entry.id ?? startIndex + i)}
-      {@const realIdx = startIndex + i}
       <div
         class="row"
-        class:selected={$selectedIdx === realIdx}
-        on:click={() => handleSelect(realIdx)}
-        on:keydown={(e) => handleKeyDown(e, realIdx)}
+        class:selected={$selectedId === entry.id}
+        on:click={() => handleSelect(entry)}
+        on:keydown={(e) => handleKeyDown(e, entry)}
         role="button"
         tabindex="0"
       >

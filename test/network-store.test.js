@@ -11,7 +11,16 @@ globalThis.localStorage = globalThis.localStorage || (() => {
   };
 })();
 
-const { log, filteredLog, filterValue, addLog, reprocessAllLogs, clearLogs } = await import('../src/stores/network.js');
+const {
+  log,
+  filteredLog,
+  filterValue,
+  selectedEntry,
+  selectedId,
+  addLog,
+  reprocessAllLogs,
+  clearLogs,
+} = await import('../src/stores/network.js');
 const { protoEngine } = await import('../src/lib/proto-engine.js');
 const { services } = await import('../src/stores/schema.js');
 const { enablePostMessage, enableReflection } = await import('../src/stores/settings.js');
@@ -31,6 +40,7 @@ describe('network selective reprocessing', () => {
     clearLogs(true);
     services.set([]);
     filterValue.set('');
+    selectedId.set(null);
     enablePostMessage.set(true);
     enableReflection.set(true);
 
@@ -50,6 +60,7 @@ describe('network selective reprocessing', () => {
     clearLogs(true);
     services.set([]);
     filterValue.set('');
+    selectedId.set(null);
     enablePostMessage.set(true);
     enableReflection.set(true);
   });
@@ -167,6 +178,7 @@ describe('network store optimization paths', () => {
     clearLogs(true);
     services.set([]);
     filterValue.set('');
+    selectedId.set(null);
     enablePostMessage.set(true);
     enableReflection.set(true);
 
@@ -186,6 +198,7 @@ describe('network store optimization paths', () => {
     clearLogs(true);
     services.set([]);
     filterValue.set('');
+    selectedId.set(null);
     enablePostMessage.set(true);
     enableReflection.set(true);
   });
@@ -253,5 +266,40 @@ describe('network store optimization paths', () => {
     await addLog(makeEntry({ id: 'reflection-disabled', _source: 'reflection' }));
 
     expect(get(log)).toEqual([]);
+  });
+
+  it('selectedEntry 會在列表順序變動後仍指向相同 id 的 entry', () => {
+    const first = makeEntry({ id: 'first', endpoint: 'FirstCall' });
+    const second = makeEntry({ id: 'second', endpoint: 'SecondCall' });
+
+    log.set([first, second]);
+    selectedId.set('second');
+
+    log.set([makeEntry({ id: 'new', endpoint: 'NewCall' }), first, second]);
+
+    expect(get(selectedEntry)?.id).toBe('second');
+  });
+
+  it('selectedEntry 會在 filter 改變後仍維持相同選取項目', () => {
+    const first = makeEntry({ id: 'first', endpoint: 'FirstCall' });
+    const second = makeEntry({ id: 'second', endpoint: 'SecondCall' });
+
+    log.set([first, second]);
+    selectedId.set('second');
+    filterValue.set('second');
+
+    expect(get(selectedEntry)?.id).toBe('second');
+  });
+
+  it('selectedEntry 在選取項目被 filter 隱藏後仍保留原始選取', () => {
+    const first = makeEntry({ id: 'first', endpoint: 'FirstCall' });
+    const second = makeEntry({ id: 'second', endpoint: 'SecondCall' });
+
+    log.set([first, second]);
+    selectedId.set('second');
+    filterValue.set('first');
+
+    expect(get(filteredLog).map(entry => entry.id)).toEqual(['first']);
+    expect(get(selectedEntry)?.id).toBe('second');
   });
 });
