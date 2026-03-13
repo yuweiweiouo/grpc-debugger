@@ -17,6 +17,7 @@
   import { activePage } from "./stores/ui";
   import { listPaneWidth } from "./stores/layout";
   import { theme } from "./stores/settings";
+  import { resolveTimestampMs } from "./lib/time";
   let tabId;
   let runtimeMessageListener;
 
@@ -67,7 +68,7 @@
                 : message.response,
               error: message.error,
               status: "finished",
-              startTime: Date.now() / 1000,
+              startTime: resolveTimestampMs(message.timestamp),
               _source: "interceptor",
             });
             return;
