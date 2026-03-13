@@ -207,6 +207,28 @@ describe('network store optimization paths', () => {
     expect(someSpy).not.toHaveBeenCalled();
   });
 
+  it('filteredLog 在 entry 缺少 endpoint 時仍可依 method 過濾', () => {
+    filterValue.set('stream');
+    log.set([
+      makeEntry({ id: 'method-only', method: '/pkg.Service/StreamCall' }),
+      makeEntry({ id: 'other-method', method: '/pkg.Service/UnaryCall' }),
+    ]);
+
+    expect(() => get(filteredLog)).not.toThrow();
+    expect(get(filteredLog).map(entry => entry.id)).toEqual(['method-only']);
+  });
+
+  it('filteredLog 在 entry 缺少 method 時仍可依 endpoint 過濾', () => {
+    filterValue.set('stream');
+    log.set([
+      makeEntry({ id: 'endpoint-only', method: undefined, endpoint: 'StreamCall' }),
+      makeEntry({ id: 'other-endpoint', method: undefined, endpoint: 'UnaryCall' }),
+    ]);
+
+    expect(() => get(filteredLog)).not.toThrow();
+    expect(get(filteredLog).map(entry => entry.id)).toEqual(['endpoint-only']);
+  });
+
   it('addLog 會正規化 endpoint，且 interceptor 不走 decode pipeline', async () => {
     const interceptorEntry = makeEntry({
       id: 'interceptor-entry',

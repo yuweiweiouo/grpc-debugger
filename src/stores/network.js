@@ -40,9 +40,11 @@ export const filteredLog = derived(
 
       // 2. 關鍵字過濾：比對方法名或 Endpoint
       if (!$filterValue) return true;
+      const method = typeof entry.method === 'string' ? entry.method : '';
+      const endpoint = typeof entry.endpoint === 'string' ? entry.endpoint : '';
       return (
-        entry.method.toLowerCase().includes(lowerFilter) || 
-        entry.endpoint.toLowerCase().includes(lowerFilter)
+        method.toLowerCase().includes(lowerFilter) || 
+        endpoint.toLowerCase().includes(lowerFilter)
       );
     });
   }
