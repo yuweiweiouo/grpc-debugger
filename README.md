@@ -36,8 +36,8 @@ gRPC-Web 網路請求除錯工具，自動攔截並解碼 Protobuf 訊息。
 ### 進階功能
 
 **載入 Proto 定義檔：**
-- 點擊工具列的「Load Proto」按鈕
-- 或直接拖放 `.proto` 檔案到面板
+- 直接拖放 `.proto` 檔案到面板
+- 或讓工具透過 Reflection 自動同步服務定義
 
 載入 Proto 後，欄位名稱會從 `field_1`、`field_2` 變成實際的欄位名稱。
 
@@ -48,10 +48,16 @@ gRPC-Web 網路請求除錯工具，自動攔截並解碼 Protobuf 訊息。
 npm install
 
 # 開發模式
-npm start
+npm run dev
+
+# 測試
+npm test
 
 # 建置
 npm run build
+
+# 預覽建置結果
+npm run preview
 ```
 
 ## 授權

@@ -17,9 +17,8 @@
   import { activePage } from "./stores/ui";
   import { listPaneWidth } from "./stores/layout";
   import { theme } from "./stores/settings";
-  import { t } from "./lib/i18n";
-
   let tabId;
+  let runtimeMessageListener;
 
   onMount(() => {
     applyTheme($theme);
@@ -36,7 +35,7 @@
         };
 
         // 監聽來自 content-script / background 的訊息
-        chrome.runtime.onMessage.addListener((message) => {
+        runtimeMessageListener = (message) => {
           // 跳過 background relay 的重複訊息（只處理 content-script 直接送來的）
           if (message._relayedBy === "background") return;
 
@@ -81,7 +80,8 @@
           ) {
             registerSchema(message.schema, message.source || "");
           }
-        });
+        };
+        chrome.runtime.onMessage.addListener(runtimeMessageListener);
 
         // 監聽頁面重新載入以清除日誌
         if (chrome.tabs && chrome.tabs.onUpdated) {
@@ -101,6 +101,9 @@
     }
     if (typeof chrome !== "undefined" && chrome.tabs?.onUpdated) {
       chrome.tabs.onUpdated.removeListener(onTabUpdated);
+    }
+    if (typeof chrome !== "undefined" && runtimeMessageListener) {
+      chrome.runtime?.onMessage?.removeListener(runtimeMessageListener);
     }
   });
 
@@ -163,11 +166,13 @@
         <div class="list-pane">
           <NetworkList />
         </div>
-        <div
+        <button
+          type="button"
           class="resizer"
           class:active={isResizing}
+          aria-label="Resize panels"
           on:mousedown|preventDefault={startResizing}
-        ></div>
+        ></button>
         <div class="details-pane">
           <NetworkDetails />
         </div>
@@ -285,10 +290,13 @@
   }
 
   .resizer {
+    appearance: none;
     width: 4px;
     height: 100%;
     cursor: col-resize;
     background: transparent;
+    border: 0;
+    padding: 0;
     transition: background 0.2s;
     flex: 0 0 4px;
     z-index: 10;

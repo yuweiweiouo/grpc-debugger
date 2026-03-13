@@ -1,4 +1,6 @@
 // @ts-nocheck
+import { arrayBufferToBase64 } from './request-body-base64';
+
 /**
  * gRPC Debugger - Robust Interceptor v2.23 (Ironclad)
  * 攔截 fetch 與 XHR 請求，包含版本化日誌與同步 XHR 支援
@@ -44,19 +46,6 @@
     } catch {
       return url;
     }
-  }
-
-  /**
-   * 高效將 ArrayBuffer/Uint8Array 轉為 Base64
-   */
-  function arrayBufferToBase64(buffer) {
-    const bytes = new Uint8Array(buffer);
-    let binary = '';
-    const len = bytes.byteLength;
-    for (let i = 0; i < len; i++) {
-      binary += String.fromCharCode(bytes[i]);
-    }
-    return btoa(binary);
   }
 
   /**
