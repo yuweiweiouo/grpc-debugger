@@ -42,7 +42,7 @@
       <Trash2 size={16} />
     </button>
     <div class="search-container">
-      <Search size={14} class="search-icon" />
+      <span class="search-icon"><Search size={14} /></span>
       <input
         type="text"
         placeholder={$t("filter_placeholder")}
@@ -128,7 +128,9 @@
     width: 240px;
   }
 
-  :global(.search-icon) {
+  .search-icon {
+    display: inline-flex;
+    align-items: center;
     color: var(--color-text-secondary);
     margin-right: 6px;
   }
