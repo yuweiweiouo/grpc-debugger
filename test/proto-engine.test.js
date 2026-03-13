@@ -160,6 +160,12 @@ describe('proto-engine', () => {
       expect(result._error).toContain('找不到 Schema 定義');
     });
 
+    it('找不到 schema 時應回傳結構化錯誤原因', () => {
+      const buffer = new Uint8Array([0x08, 0x0a]);
+      const result = engine.decodeMessage('unknown.Type', buffer);
+      expect(result._decodeReason).toBe('missing_schema');
+    });
+
     it('應回傳 buffer 長度資訊', () => {
       const buffer = new Uint8Array([0x08, 0x0a]);
       const result = engine.decodeMessage('unknown.Type', buffer);

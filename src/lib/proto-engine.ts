@@ -399,7 +399,11 @@ class ProtoEngine {
     if (!typeName) {
       return { _error: '未提供類型名稱', _rawLength: buffer.length };
     }
-    return { _error: `找不到 Schema 定義: ${typeName}`, _rawLength: buffer.length };
+    return {
+      _error: `找不到 Schema 定義: ${typeName}`,
+      _decodeReason: 'missing_schema',
+      _rawLength: buffer.length,
+    };
   }
 
   /**
@@ -508,4 +512,3 @@ export { ProtoEngine };
 // 匯出單例：保證整個應用共用同一個 Schema 註冊表
 export const protoEngine = new ProtoEngine();
 export default protoEngine;
-

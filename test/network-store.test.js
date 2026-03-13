@@ -58,7 +58,10 @@ describe('network selective reprocessing', () => {
     const schemaDependentEntry = makeEntry({
       id: 'schema-dependent',
       requestRaw: new Uint8Array([1, 2, 3]),
-      request: { _error: '找不到 Schema 定義: pkg.Request' },
+      request: {
+        _error: '找不到 Schema 定義: pkg.Request',
+        _decodeReason: 'missing_schema',
+      },
     });
     const otherDecodeFailureEntry = makeEntry({
       id: 'other-decode-failure',
@@ -99,7 +102,10 @@ describe('network selective reprocessing', () => {
   it('沒有 raw payload 的 entry 不應被 retry', async () => {
     const noRawPayloadEntry = makeEntry({
       id: 'no-raw-payload',
-      request: { _error: '找不到 Schema 定義: pkg.Request' },
+      request: {
+        _error: '找不到 Schema 定義: pkg.Request',
+        _decodeReason: 'missing_schema',
+      },
     });
 
     log.set([noRawPayloadEntry]);
@@ -109,6 +115,32 @@ describe('network selective reprocessing', () => {
     expect(protoEngine.decodeMessage).not.toHaveBeenCalled();
     expect(noRawPayloadEntry.request).toEqual({
       _error: '找不到 Schema 定義: pkg.Request',
+      _decodeReason: 'missing_schema',
+    });
+  });
+
+  it('response 端的 missing schema entry 也應被 selective retry', async () => {
+    const responseSchemaDependentEntry = makeEntry({
+      id: 'response-schema-dependent',
+      responseRaw: new Uint8Array([9, 8, 7]),
+      response: {
+        _error: '找不到 Schema 定義: pkg.Response',
+        _decodeReason: 'missing_schema',
+      },
+    });
+
+    log.set([responseSchemaDependentEntry]);
+
+    await reprocessAllLogs();
+
+    expect(protoEngine.decodeMessage).toHaveBeenCalledTimes(1);
+    expect(protoEngine.decodeMessage).toHaveBeenCalledWith(
+      'pkg.Response',
+      expect.any(Uint8Array)
+    );
+    expect(responseSchemaDependentEntry.response).toEqual({
+      $typeName: 'pkg.Response',
+      size: 3,
     });
   });
 

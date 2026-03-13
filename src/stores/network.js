@@ -12,8 +12,6 @@ import { protoEngine } from '../lib/proto-engine';
 import { tryAutoReflection, hasReflected, services } from './schema';
 import { enablePostMessage, enableReflection } from './settings';
 
-const MISSING_SCHEMA_ERROR_PREFIX = '找不到 Schema 定義:';
-
 // 原始日誌陣列
 export const log = writable([]);
 // UI 過濾關鍵字
@@ -231,8 +229,9 @@ function isSchemaDependentDecodeFailure(decodedValue) {
   return Boolean(
     decodedValue &&
     typeof decodedValue === 'object' &&
-    typeof decodedValue._error === 'string' &&
-    decodedValue._error.startsWith(MISSING_SCHEMA_ERROR_PREFIX)
+    (decodedValue._decodeReason === 'missing_schema' ||
+      (typeof decodedValue._error === 'string' &&
+        decodedValue._error.startsWith('找不到 Schema 定義:')))
   );
 }
 
