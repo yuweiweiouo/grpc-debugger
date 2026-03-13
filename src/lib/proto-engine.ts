@@ -16,6 +16,9 @@ import {
 import { 
   FileDescriptorSetSchema 
 } from '@bufbuild/protobuf/wkt';
+import { createLogger } from './logger';
+
+const logger = createLogger('ProtoEngine');
 
 /**
  * ProtoEngine 類別：管理全域 Protobuf Schema 定義與訊息轉換邏輯
@@ -77,9 +80,9 @@ class ProtoEngine {
         }
       }
       
-      console.log(`[ProtoEngine] 成功註冊：${this.schemas.size} 個訊息，${this.serviceMap.size} 個方法`);
+      logger.info(`成功註冊：${this.schemas.size} 個訊息，${this.serviceMap.size} 個方法`);
     } catch (e) {
-      console.error('[ProtoEngine] Schema 註冊失敗:', e);
+      logger.error('Schema 註冊失敗:', e);
     }
   }
 
@@ -117,7 +120,7 @@ class ProtoEngine {
         }
       }
     }
-    console.log(`[ProtoEngine] Schema 註冊完成，共計 ${this.schemas.size} 訊息，${this.serviceMap.size} 方法，Registry: ${!!this.registry}`);
+    logger.debug(`Schema 註冊完成，共計 ${this.schemas.size} 訊息，${this.serviceMap.size} 方法，Registry: ${!!this.registry}`);
   }
 
   /**
@@ -288,9 +291,9 @@ class ProtoEngine {
 
     if (!descMessage) {
       const availableKeys = Array.from(this.schemas.keys()).slice(0, 20);
-      console.error(`[ProtoEngine] 找不到編碼用的 Schema: ${typeName}`);
-      console.error(`[ProtoEngine] 可用的 Schemas (前20個): ${availableKeys.join(', ')}`);
-      console.error(`[ProtoEngine] Registry 存在: ${!!this.registry}`);
+      logger.error(`找不到編碼用的 Schema: ${typeName}`);
+      logger.debug(`可用的 Schemas (前20個): ${availableKeys.join(', ')}`);
+      logger.debug(`Registry 存在: ${!!this.registry}`);
       return null;
     }
 
@@ -298,7 +301,7 @@ class ProtoEngine {
       const message = create(descMessage, this._jsonToProto(jsonData, descMessage));
       return toBinary(descMessage, message);
     } catch (e) {
-      console.error(`[ProtoEngine] 編碼失敗:`, e);
+      logger.error(`編碼失敗:`, e);
       return null;
     }
   }
@@ -316,17 +319,15 @@ class ProtoEngine {
     const descMessage = schema?.kind === 'message' ? schema : schema?._desc;
 
     if (!descMessage) {
-      console.error(`[ProtoEngine] 找不到 Template 用的 Schema: ${typeName}`);
+      logger.error(`找不到 Template 用的 Schema: ${typeName}`);
       return null;
     }
 
     try {
-      // 建立預設訊息物件
       const message = create(descMessage);
-      // 轉換為純 JS 物件
       return this._messageToObject(message, descMessage);
     } catch (e) {
-      console.error(`[ProtoEngine] 產生模板失敗:`, e);
+      logger.error(`產生模板失敗:`, e);
       return null;
     }
   }
@@ -390,7 +391,7 @@ class ProtoEngine {
           };
         }
         
-        console.error(`[ProtoEngine] 解碼失敗 (${typeName}): ${e.message}`);
+        logger.error(`解碼失敗 (${typeName}): ${e.message}`);
         return { _error: `解碼失敗: ${e.message}`, _typeName: typeName };
       }
     }

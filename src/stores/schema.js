@@ -11,6 +11,9 @@ import { writable, get } from 'svelte/store';
 import { protoEngine } from '../lib/proto-engine';
 import reflectionClient from '../lib/reflection-client';
 import { enableReflection } from './settings';
+import { createLogger } from '../lib/logger';
+
+const logger = createLogger('Schema');
 
 // 目前註冊的所有服務定義
 export const services = writable([]);
@@ -89,7 +92,7 @@ export async function tryAutoReflection(url) {
     
     return success;
   } catch (e) {
-    console.error('[Schema] 自動反射發生異常:', e);
+    logger.error('自動反射發生異常:', e);
     return false;
   }
 }
@@ -121,7 +124,7 @@ async function performReflection(origin) {
   } catch (e) {
     reflectedServers.add(origin);
     reflectionStatus.set('failed');
-    console.error(`[Schema] 反射失敗 ${origin}:`, e);
+    logger.error(`反射失敗 ${origin}:`, e);
     return false;
   }
 }

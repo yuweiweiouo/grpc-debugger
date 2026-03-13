@@ -348,7 +348,7 @@ async function decompressGzip(buffer) {
     }
     return result;
   } catch (e) {
-    console.warn('[Network] Gzip 解壓失敗:', e);
+    logger.warn('Gzip 解壓失敗:', e);
     return buffer;
   }
 }
