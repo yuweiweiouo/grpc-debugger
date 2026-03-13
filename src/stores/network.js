@@ -16,8 +16,8 @@ import { enablePostMessage, enableReflection } from './settings';
 export const log = writable([]);
 // UI 過濾關鍵字
 export const filterValue = writable('');
-// 目前選擇的日誌索引
-export const selectedIdx = writable(null);
+// 目前選擇的日誌 ID
+export const selectedId = writable(null);
 // 是否在清除時保留紀錄 (Preserve Log)
 export const preserveLog = writable(false);
 
@@ -54,10 +54,10 @@ export const filteredLog = derived(
  * 目前選擇的日誌條目
  */
 export const selectedEntry = derived(
-  [filteredLog, selectedIdx],
-  ([$filteredLog, $selectedIdx]) => {
-    if ($selectedIdx === null) return null;
-    return $filteredLog[$selectedIdx];
+  [log, selectedId],
+  ([$log, $selectedId]) => {
+    if ($selectedId === null) return null;
+    return $log.find(entry => entry.id === $selectedId) || null;
   }
 );
 
@@ -169,7 +169,7 @@ export async function reprocessAllLogs() {
 export function clearLogs(force = false) {
   if (get(preserveLog) && !force) return;
   log.set([]);
-  selectedIdx.set(null);
+  selectedId.set(null);
 }
 
 /**
