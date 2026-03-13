@@ -12,6 +12,8 @@ import { protoEngine } from '../lib/proto-engine';
 import { tryAutoReflection, hasReflected, services } from './schema';
 import { enablePostMessage, enableReflection } from './settings';
 
+const MISSING_SCHEMA_ERROR_PREFIX = '找不到 Schema 定義:';
+
 // 原始日誌陣列
 export const log = writable([]);
 // UI 過濾關鍵字
@@ -28,19 +30,18 @@ export const preserveLog = writable(false);
 export const filteredLog = derived(
   [log, filterValue, services],
   ([$log, $filterValue, $services]) => {
-    // 獲取所有使用者標記為隱藏的服務名稱
-    const hiddenServiceNames = $services.filter(s => s.hidden).map(s => s.fullName);
+    const hiddenServicePrefixes = new Set(
+      $services
+        .filter(service => service.hidden)
+        .map(service => `/${service.fullName}/`)
+    );
+    const lowerFilter = $filterValue.toLowerCase();
 
     return $log.filter(entry => {
-      // 1. 隱藏過濾：若該請求屬於被隱藏的服務，則不顯示
-      const isHidden = hiddenServiceNames.some(serviceName => 
-        entry.method && entry.method.startsWith(`/${serviceName}/`)
-      );
-      if (isHidden) return false;
+      if (isEntryHidden(entry, hiddenServicePrefixes)) return false;
 
       // 2. 關鍵字過濾：比對方法名或 Endpoint
       if (!$filterValue) return true;
-      const lowerFilter = $filterValue.toLowerCase();
       return (
         entry.method.toLowerCase().includes(lowerFilter) || 
         entry.endpoint.toLowerCase().includes(lowerFilter)
@@ -73,23 +74,13 @@ export const selectedEntry = derived(
  * @param {object} entry 請求條目物件
  */
 export async function addLog(entry) {
-  // 從 /pkg.Service/Method 提取最後的 Method 名稱作為顯示用
-  if (entry.method) {
-    const parts = entry.method.split("/");
-    entry.endpoint = parts.pop() || parts.pop();
-  }
+  normalizeEntryEndpoint(entry);
 
-  // 根據來源檢查對應的開關：被停用的來源直接丟棄
-  if (entry._source === 'interceptor' && !get(enablePostMessage)) return;
-  if (entry._source !== 'interceptor' && !get(enableReflection)) return;
+  if (!isEntrySourceEnabled(entry)) return;
 
-  // 非 interceptor 來源才需要觸發自動反射與解碼
   let isNewSchema = false;
-  if (entry._source !== 'interceptor') {
-    // 自動同步：若遇到未知的 URL，嘗試進行 gRPC 反射
+  if (shouldProcessEntry(entry)) {
     isNewSchema = await tryAutoReflection(entry.url);
-    
-    // 執行解碼流程
     await processEntry(entry);
   }
   
@@ -124,6 +115,34 @@ export async function addLog(entry) {
   }
 }
 
+function isEntryHidden(entry, hiddenServicePrefixes) {
+  if (!entry?.method || hiddenServicePrefixes.size === 0) return false;
+  const servicePrefix = getMethodServicePrefix(entry.method);
+  return hiddenServicePrefixes.has(servicePrefix);
+}
+
+function getMethodServicePrefix(method) {
+  const serviceEndIdx = method.indexOf('/', 1);
+  if (serviceEndIdx === -1) return '';
+  return method.slice(0, serviceEndIdx + 1);
+}
+
+function normalizeEntryEndpoint(entry) {
+  if (!entry.method) return;
+  const parts = entry.method.split('/');
+  entry.endpoint = parts.pop() || parts.pop();
+}
+
+function isEntrySourceEnabled(entry) {
+  return entry._source === 'interceptor'
+    ? get(enablePostMessage)
+    : get(enableReflection);
+}
+
+function shouldProcessEntry(entry) {
+  return entry._source !== 'interceptor';
+}
+
 /**
  * 重新處理所有日誌
  * 當 Reflection 成功後，我們可以回頭解析那些之前顯示為 "No Schema" 的請求。
@@ -133,10 +152,12 @@ export async function reprocessAllLogs() {
   
   if (!currentLogs || currentLogs.length === 0) return;
 
-  // 對所有具備原始資料的項目執行重新解碼
-  await Promise.all(
-    currentLogs.map(entry => processEntry(entry, true))
-  );
+  for (const entry of currentLogs) {
+    const retryPlan = getEntryRetryPlan(entry);
+    if (!retryPlan.request && !retryPlan.response) continue;
+
+    await processEntry(entry, retryPlan);
+  }
   
   // 通知 Svelte 更新 UI
   log.set([...currentLogs]);
@@ -158,10 +179,13 @@ async function processEntry(entry, forceReprocess = false) {
   // Interceptor 來源的 entry 已包含解碼好的 JSON，不需走二進位解碼管線
   if (entry._source === 'interceptor') return;
 
+  const retryRequest = forceReprocess === true || forceReprocess?.request === true;
+  const retryResponse = forceReprocess === true || forceReprocess?.response === true;
+
   const methodInfo = protoEngine.findMethod(entry.method);
   
   // 處理請求資料解碼
-  if (entry.requestRaw && (forceReprocess || !entry.request)) {
+  if (entry.requestRaw && (retryRequest || !entry.request)) {
     try {
       const payload = await extractPayload(entry.requestRaw, entry.requestBase64Encoded, entry.requestHeaders);
       if (payload) {
@@ -174,7 +198,7 @@ async function processEntry(entry, forceReprocess = false) {
   }
 
   // 處理回應資料解碼
-  if (entry.responseRaw && (forceReprocess || !entry.response)) {
+  if (entry.responseRaw && (retryResponse || !entry.response)) {
     try {
       const payload = await extractPayload(entry.responseRaw, entry.responseBase64Encoded, entry.responseHeaders);
       const typeName = methodInfo?.responseType || null;
@@ -185,6 +209,31 @@ async function processEntry(entry, forceReprocess = false) {
       entry.response = { _error: e.message };
     }
   }
+}
+
+function getEntryRetryPlan(entry) {
+  if (!entry || entry._source === 'interceptor') {
+    return { request: false, response: false };
+  }
+
+  return {
+    request: shouldRetryDecodedField(entry.requestRaw, entry.request),
+    response: shouldRetryDecodedField(entry.responseRaw, entry.response),
+  };
+}
+
+function shouldRetryDecodedField(rawPayload, decodedValue) {
+  if (!rawPayload) return false;
+  return isSchemaDependentDecodeFailure(decodedValue);
+}
+
+function isSchemaDependentDecodeFailure(decodedValue) {
+  return Boolean(
+    decodedValue &&
+    typeof decodedValue === 'object' &&
+    typeof decodedValue._error === 'string' &&
+    decodedValue._error.startsWith(MISSING_SCHEMA_ERROR_PREFIX)
+  );
 }
 
 // ============================================================================
@@ -350,4 +399,3 @@ async function extractGrpcFrames(buffer) {
   }
   return combined;
 }
-

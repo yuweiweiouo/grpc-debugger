@@ -37,6 +37,7 @@
       class="icon-btn"
       on:click={handleClearLogs}
       title={$t("clear_logs")}
+      aria-label={$t("clear_logs")}
     >
       <Trash2 size={16} />
     </button>
@@ -55,11 +56,11 @@
     <span class="separator">|</span>
     <label class="preserve-checkbox">
       <input type="checkbox" bind:checked={$enablePostMessage} />
-      <span>[來源] GRPC Web DevTool</span>
+      <span>{$t("source_postmessage")}</span>
     </label>
     <label class="preserve-checkbox">
       <input type="checkbox" bind:checked={$enableReflection} />
-      <span>[來源] Server Reflection</span>
+      <span>{$t("source_reflection")}</span>
     </label>
   </div>
 
@@ -68,6 +69,7 @@
       class="icon-btn"
       on:click={handleReprocess}
       title={$t("reprocess_logs")}
+      aria-label={$t("reprocess_logs")}
       disabled={isReprocessing}
       class:spinning={isReprocessing}
     >
@@ -126,7 +128,7 @@
     width: 240px;
   }
 
-  .search-icon {
+  :global(.search-icon) {
     color: var(--color-text-secondary);
     margin-right: 6px;
   }

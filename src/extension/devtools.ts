@@ -3,6 +3,13 @@
 // DevTools Entry Point - gRPC Debugger v2.24
 // 使用 FIFO + Path 策略匹配，無 pending 條目（避免 Race Condition）
 
+import {
+  BASE_POLL_INTERVAL_MS,
+  computeNextPollDelay,
+  decodePolledCalls,
+  EMPTY_POLL_RESULT,
+} from './devtools-polling.ts';
+
 /**
  * 檢查是否為 gRPC-Web 請求
  */
@@ -60,6 +67,7 @@ function parseGrpcStatus(headers) {
 const pendingEntries = [];
 let panelWindow = null;
 let panelReady = false;
+let currentPollDelayMs = BASE_POLL_INTERVAL_MS;
 
 // v2.23: 使用 Map(path => Array) 儲存，配合 FIFO 匹配
 const capturedBodies = new Map();
@@ -125,10 +133,13 @@ chrome.runtime.onMessage.addListener((message) => {
 // 完全不依賴 content-script 或 injector 的載入時機。
 // ============================================================================
 
-const POLL_INTERVAL_MS = 300;
 const MAX_MATCH_RETRIES = 30;
 const MATCH_RETRY_DELAY_MS = 100;
 const ENTRY_CACHE_TTL_MS = 60000;
+
+function scheduleInterceptorPoll(delayMs = currentPollDelayMs) {
+  setTimeout(pollInterceptorCalls, delayMs);
+}
 
 /**
  * 透過 inspectedWindow.eval 在頁面注入 postMessage 監聽器
@@ -173,16 +184,17 @@ chrome.devtools.network.onNavigated.addListener(() => {
 function pollInterceptorCalls() {
   chrome.devtools.inspectedWindow.eval(
     `(function() {
-      var q = window.__GRPC_CALLS_QUEUE__;
-      if (!q || q.length === 0) return '[]';
-      window.__GRPC_CALLS_QUEUE__ = [];
-      return JSON.stringify(q);
-    })()`,
+       var q = window.__GRPC_CALLS_QUEUE__;
+       if (!q || q.length === 0) return '${EMPTY_POLL_RESULT}';
+       window.__GRPC_CALLS_QUEUE__ = [];
+       return JSON.stringify(q);
+     })()`,
     (result, isException) => {
-      if (isException || !result) return;
-      
+      let hadCalls = false;
+
       try {
-        const calls = JSON.parse(result);
+        const calls = isException ? [] : decodePolledCalls(result);
+        hadCalls = calls.length > 0;
         for (const call of calls) {
           const method = call.method?.startsWith('/') ? call.method : `/${call.method || ''}`;
           const parts = method.split('/');
@@ -211,13 +223,19 @@ function pollInterceptorCalls() {
         }
       } catch (e) {
         // JSON parse 失敗時靜默忽略
+      } finally {
+        currentPollDelayMs = computeNextPollDelay({
+          hadCalls,
+          currentDelayMs: currentPollDelayMs,
+        });
+        scheduleInterceptorPoll();
       }
     }
   );
 }
 
 // 啟動輪詢
-setInterval(pollInterceptorCalls, POLL_INTERVAL_MS);
+scheduleInterceptorPoll();
 
 /**
  * 處理並發送 gRPC 請求到面板
