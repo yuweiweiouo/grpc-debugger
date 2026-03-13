@@ -10,6 +10,7 @@ import {
   EMPTY_POLL_RESULT,
 } from './devtools-polling.ts';
 import { PAGE_MANAGED_CALL_QUEUE_FLAG } from './call-queue-mode.ts';
+import { resolveTimestampMs } from '../lib/time.ts';
 
 /**
  * 檢查是否為 gRPC-Web 請求
@@ -216,7 +217,7 @@ function pollInterceptorCalls() {
               : call.response,
             error: call.error || null,
             status: 'finished',
-            startTime: (call.timestamp || Date.now()) / 1000,
+            startTime: resolveTimestampMs(call.timestamp),
             _source: 'interceptor',
           };
 
@@ -291,7 +292,7 @@ function processEntry(entry) {
       endpoint,
       methodType: 'unary',
       url: entry.request.url,
-      startTime: harStartTime / 1000,
+      startTime: resolveTimestampMs(harStartTime),
       duration: entry.time,
       size: entry.response.bodySize,
       httpStatus: entry.response.status,

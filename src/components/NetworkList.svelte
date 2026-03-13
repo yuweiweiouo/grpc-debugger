@@ -11,6 +11,7 @@
   import { afterUpdate } from "svelte";
   import { filteredLog, selectedIdx, filterValue } from "../stores/network";
   import { t } from "../lib/i18n";
+  import { normalizeTimestampMs } from "../lib/time";
 
   const ROW_HEIGHT = 37;
   const BUFFER = 10;
@@ -75,8 +76,9 @@
   });
 
   function formatStartTime(ts) {
-    if (!ts) return "";
-    return new Date(ts).toLocaleTimeString([], {
+    const timestampMs = normalizeTimestampMs(ts);
+    if (!timestampMs) return "";
+    return new Date(timestampMs).toLocaleTimeString([], {
       hour12: false,
       hour: "2-digit",
       minute: "2-digit",
