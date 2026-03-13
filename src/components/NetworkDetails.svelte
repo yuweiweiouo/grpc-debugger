@@ -11,6 +11,7 @@
   import { selectedEntry } from "../stores/network";
   import { protoEngine } from "../lib/proto-engine";
   import { t } from "../lib/i18n";
+  import { normalizeActiveTab } from "../lib/network-details-tabs";
   import { combinedView } from "../stores/settings";
   import JsonTree from "./JsonTree.svelte";
   import ProtoFieldRow from "./ProtoFieldRow.svelte";
@@ -54,6 +55,7 @@
 
   $: if (searchQuery) currentMatchIndex = 0;
   $: if (activeTab) currentMatchIndex = 0;
+  $: activeTab = normalizeActiveTab(activeTab, $combinedView);
 
   function goNext() {
     if (totalMatches === 0) return;
