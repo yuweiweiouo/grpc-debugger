@@ -1,5 +1,6 @@
 // @ts-nocheck
 import { arrayBufferToBase64 } from './request-body-base64';
+import { computeRequestHash } from './request-hash';
 
 /**
  * gRPC Debugger - Robust Interceptor v2.23 (Ironclad)
@@ -46,42 +47,6 @@ import { arrayBufferToBase64 } from './request-body-base64';
     } catch {
       return url;
     }
-  }
-
-  /**
-   * 快速計算請求的雜湊值 (FNV-1a)
-   * v2.22: 將 path + headers + body 一起 hash，避免 body 為空時無法區分
-   * @param {string} path - URL 路徑
-   * @param {string} headersStr - 序列化的 headers
-   * @param {ArrayBuffer} bodyBuffer - request body
-   * @returns {string} 8 字元 hex hash
-   */
-  function computeRequestHash(path, headersStr, bodyBuffer) {
-    // FNV-1a 32-bit hash
-    let hash = 2166136261;
-    
-    // Hash path
-    for (let i = 0; i < path.length; i++) {
-      hash ^= path.charCodeAt(i);
-      hash = (hash * 16777619) >>> 0;
-    }
-    
-    // Hash headers
-    for (let i = 0; i < headersStr.length; i++) {
-      hash ^= headersStr.charCodeAt(i);
-      hash = (hash * 16777619) >>> 0;
-    }
-    
-    // Hash body
-    if (bodyBuffer) {
-      const bytes = new Uint8Array(bodyBuffer);
-      for (let i = 0; i < bytes.length; i++) {
-        hash ^= bytes[i];
-        hash = (hash * 16777619) >>> 0;
-      }
-    }
-    
-    return hash.toString(16).padStart(8, '0');
   }
 
   /**
