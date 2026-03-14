@@ -24,27 +24,11 @@ const logger = createLogger('ProtoEngine');
  * ProtoEngine 類別：管理全域 Protobuf Schema 定義與訊息轉換邏輯
  */
 class ProtoEngine {
+  registry = null;
+  serviceMap = new Map();
+  schemas = new Map();
+
   constructor() {
-    /** 
-     * @type {import('@bufbuild/protobuf').FileRegistry | null} 
-     * 官方 Registry 物件，用於查找訊息 (Message) 與服務 (Service) 定義。
-     */
-    this.registry = null;
-    
-    /** 
-     * 方法對應表
-     * Key: "/package.Service/Method"
-     * Value: 具備 Service、Method 及 Request/Response 類型名稱的資訊。
-     * @type {Map<string, {serviceName: string, methodName: string, requestType: string, responseType: string}>} 
-     */
-    this.serviceMap = new Map();
-    
-    /** 
-     * 訊息定義映射表 (向後兼容用)
-     * 儲存 TypeName 到 DescMessage 的映射，確保即便 Registry 未完全就緒也能進行基本查詢。
-     * @type {Map<string, object>} 
-     */
-    this.schemas = new Map();
   }
 
   /**
