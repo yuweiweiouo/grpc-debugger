@@ -181,7 +181,7 @@ class ReflectionClient {
         fileDescriptors.push(fd);
         fileDescriptorMap.set(fd.name, fd);
       } catch (e) {
-        console.error('FileDescriptorProto 解析損毀:', e);
+        logger.error('FileDescriptorProto 解析損毀:', e);
       }
     }
 
