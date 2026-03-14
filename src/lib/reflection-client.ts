@@ -143,7 +143,7 @@ class ReflectionClient {
             );
             await loadFileDescriptors(fileDescriptor);
           } catch (e) {
-            console.error(`無法獲取符號 ${serviceName} 的定義:`, e);
+            logger.error(`無法獲取符號 ${serviceName} 的定義:`, e);
           }
         }
 
@@ -153,7 +153,7 @@ class ReflectionClient {
           return result;
         }
       } catch (e) {
-        console.error(`反射版本 ${reflectionService} 執行時發生錯誤:`, e);
+        logger.error(`反射版本 ${reflectionService} 執行時發生錯誤:`, e);
       }
     }
 
@@ -203,14 +203,14 @@ class ReflectionClient {
         const descriptorSet = create(FileDescriptorSetSchema, { file: sortedProtos });
         registry = createFileRegistry(descriptorSet);
       } catch (e) {
-        console.error('註冊表建構失敗 (傳統模式):', e.message);
+        logger.error('註冊表建構失敗 (傳統模式):', e.message);
         
         // 備援方案：使用 functional resolver，由 SDK 動態按需解析依賴
         try {
           const resolver = (name) => WKT_FILES.get(name)?.proto || fileDescriptorMap.get(name);
           registry = createFileRegistry(fileDescriptors[0], resolver);
         } catch (eFallback) {
-          console.error('註冊表所有建構方法均告失敗:', eFallback.message);
+          logger.error('註冊表所有建構方法均告失敗:', eFallback.message);
         }
       }
 
