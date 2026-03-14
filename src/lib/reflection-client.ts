@@ -60,9 +60,9 @@ const REFLECTION_SERVICES = [
 ];
 
 class ReflectionClient {
+  cache = new Map();
+
   constructor() {
-    /** @type {Map<string, object>} 用於快取不同伺服器的反射結果 */
-    this.cache = new Map();
   }
 
   /**
