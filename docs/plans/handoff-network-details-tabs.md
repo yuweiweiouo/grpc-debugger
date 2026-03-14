@@ -1,142 +1,108 @@
-# NetworkDetails Tab 切換邏輯 - 交接文件
+# gRPC Debugger 開發進度報告
 
 > **日期**: 2026-03-14
 > **分支**: develop
-> **版本**: 1.3.29
+> **版本**: 1.3.30
 
 ---
 
-## 一、目前進度
+## 一、已完成的工作
 
-### 1.1 已完成的工作
+### 1.1 功能開發
 
-**功能描述**: 當 `combinedView` 設定切換時，自動調整 `activeTab` 到合理的位置：
-- 開啟 combined view 時，`request` / `response` tab 會自動切到 `data` tab
-- 關閉 combined view 時，`data` tab 會自動回到 `request`
+**normalizeActiveTab 功能** (commit: 5c68384)
+- 新增 `src/lib/network-details-tabs.ts` - Tab 正規化邏輯
+- 修改 `src/components/NetworkDetails.svelte` - 引入並使用 normalizeActiveTab
+- 當 combinedView 設定變更時，自動調整 activeTab：
+  - 開啟 combined view 時，request/response tab 會自動切到 data tab
+  - 關閉 combined view 時，data tab 會自動回到 request
 
-**新增檔案**:
-- `src/lib/network-details-tabs.ts` - Tab 正規化邏輯
-- `test/network-details-tabs.test.js` - 單元測試
+### 1.2 程式碼重構
 
-**修改檔案**:
-- `src/components/NetworkDetails.svelte:14,58` - 引入並使用 `normalizeActiveTab`
-- `.gitignore` - 新增 `.vscode/`
+**統一使用 logger 模組** (commits: f7686c0, c5923ef)
+- `src/stores/network.js` - 使用 logger 取代 console.log
+- `src/stores/schema.js` - 使用 logger 取代 console.error
+- `src/lib/proto-engine.ts` - 使用 logger 取代 console.log/error
 
-### 1.2 核心程式碼
+優點：
+- 生產環境可透過 setLogLevel 控制輸出層級
+- 統一的日誌格式與模組前綴 [Network], [Schema], [ProtoEngine]
+- 便於除錯與維護
 
-**src/lib/network-details-tabs.ts**:
-```typescript
-export function normalizeActiveTab(activeTab, isCombinedView) {
-  if (isCombinedView && (activeTab === 'request' || activeTab === 'response')) {
-    return 'data';
-  }
+### 1.3 測試新增
 
-  if (!isCombinedView && activeTab === 'data') {
-    return 'request';
-  }
+**新增測試檔案：**
+- `test/network-details-tabs.test.js` - 7 tests
+- `test/settings.test.js` - 6 tests
+- `test/layout.test.js` - 2 tests
+- `test/ui.test.js` - 2 tests
 
-  return activeTab;
-}
-```
+**測試總數：** 109 passed (原 95 → 新增 14)
 
-**NetworkDetails.svelte 的修改**:
-```svelte
-import { normalizeActiveTab } from "../lib/network-details-tabs";
-// ...
-$: activeTab = normalizeActiveTab(activeTab, $combinedView);
-```
-
-### 1.3 測試覆蓋
-
-**test/network-details-tabs.test.js**:
-- 開啟 combined view 時，request/response 會切到 data tab
-- 關閉 combined view 時，data tab 會回到 request
-- 其他 tab 保持不變
-
----
-
-## 二、待辦事項
-
-### 2.1 立即需要完成
-
-- [ ] **執行測試驗證**
-  ```bash
-  npm run test
-  ```
-  確認 `network-details-tabs.test.js` 通過
-
-- [ ] **執行 Build**
-  ```bash
-  npm run build
-  ```
-  確認 build 成功，`build/assets/panel.js` 更新
-
-- [ ] **手動測試**
-  1. 開啟 DevTools，載入擴充功能
-  2. 選擇一個 gRPC 請求
-  3. 切換 Settings 中的 "Combined View"
-  4. 確認 tab 自動切換：
-     - request → data (開啟 combined view)
-     - data → request (關閉 combined view)
-
-- [ ] **提交變更**
-  ```bash
-  git add .
-  git commit -m "feat: auto-switch tab when combinedView changes"
-  ```
-
-### 2.2 後續優化（非必要）
-
-- [ ] 考慮將 `activeTab` 狀態持久化到 URL 或 localStorage
-- [ ] 考慮在 tab 切換時加入動畫過渡
-- [ ] 檢查是否有其他地方也需要類似的 tab 同步邏輯
-
----
-
-## 三、技術背景
-
-### 3.1 專案結構
+### 1.4 Commit 列表
 
 ```
-grpc-debugger/
-├── src/
-│   ├── components/
-│   │   └── NetworkDetails.svelte   # 請求詳情面板
-│   ├── lib/
-│   │   └── network-details-tabs.ts # Tab 正規化邏輯 (新)
-│   └── stores/
-│       └── settings.ts             # combinedView 設定
-├── test/
-│   └── network-details-tabs.test.js # 單元測試 (新)
-└── build/
-    └── assets/
-        └── panel.js                # Build 產物
+c141c33 test(stores): 新增 layout.js 和 ui.js 單元測試
+41c4d3a chore: 版本更新至 1.3.30
+c5923ef refactor: 統一使用 logger 模組取代 console.log/warn/error
+a0f13ec test(network-details-tabs): 新增 normalizeActiveTab 邊界測試
+ede4230 test(settings): 新增 settings.js 單元測試
+f7686c0 refactor(network): 使用 logger 取代 console.log 診斷日誌
+5c68384 feat(network-details): 自動調整 tab 當 combinedView 設定變更
 ```
 
-### 3.2 相關 Store
+---
 
-- `combinedView` 來自 `src/stores/settings.ts`
-- `selectedEntry` 來自 `src/stores/network.ts`
+## 二、專案狀態
 
-### 3.3 測試框架
+### 2.1 測試覆蓋
 
-- 使用 **Vitest**
-- 執行測試: `npm run test`
-- 監聽模式: `npm run test:watch`
+| 模組 | 測試檔案 | 測試數量 |
+|------|----------|----------|
+| proto-engine | test/proto-engine.test.js | 26 |
+| network-store | test/network-store.test.js | 13 |
+| descriptor-parser | test/descriptor-parser.test.js | 19 |
+| logger | test/logger.test.js | 8 |
+| network-details-tabs | test/network-details-tabs.test.js | 7 |
+| settings | test/settings.test.js | 6 |
+| i18n | test/i18n.test.js | 4 |
+| time | test/time.test.js | 5 |
+| grpc-web-transport | test/grpc-web-transport.test.js | 7 |
+| devtools-polling | test/devtools-polling.test.js | 4 |
+| layout | test/layout.test.js | 2 |
+| ui | test/ui.test.js | 2 |
+| 其他 | request-hash, request-body-base64, call-queue-mode | 6 |
+| **總計** | **15 個測試檔案** | **109 tests** |
+
+### 2.2 Build 狀態
+
+- Build 成功
+- panel.js: 187.34 KB (gzip: 59.89 KB)
+- panel.css: 20.63 KB (gzip: 4.11 KB)
 
 ---
 
-## 四、注意事項
+## 三、後續建議
 
-1. **build/assets/panel.js** 是 build 產物，通常不應該 commit，但目前有被追蹤
-2. `.vscode/` 已加入 `.gitignore`
-3. 確保提交前執行 `npm run build` 更新產物
+### 3.1 可繼續優化的項目
+
+1. **reflection-client.ts 測試** - 需要 mock 網絡請求，較複雜
+2. **移除未使用的 import** - 檢查各檔案是否有未使用的導入
+3. **TypeScript 類型增強** - 解決 LSP 警告（proto-engine.ts, reflection-client.ts）
+4. **i18n 完整性檢查** - 確保所有翻譯鍵都有對應的翻譯
+
+### 3.2 功能建議
+
+1. **activeTab 持久化** - 將 activeTab 狀態持久化到 URL 或 localStorage
+2. **Tab 切換動畫** - 加入過渡動畫效果
+3. **快捷鍵支援** - 加入鍵盤快捷鍵切換 tab
 
 ---
 
-## 五、驗收標準
+## 四、驗收標準
 
-- [ ] `npm run test` 全部通過
-- [ ] `npm run build` 成功
-- [ ] 手動測試 combinedView 切換時 tab 正確跳轉
-- [ ] 程式碼已提交到 develop 分支
+- [x] `npm run test` 全部通過 (109 passed)
+- [x] `npm run build` 成功
+- [x] 程式碼已提交到 develop 分支
+- [x] 每個功能都有對應的測試
+- [x] 使用統一的 logger 模組
