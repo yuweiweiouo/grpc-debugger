@@ -21,6 +21,26 @@
   let tabId;
   let runtimeMessageListener;
 
+  const DEDUP_WINDOW_MS = 2000;
+  const recentlyProcessedCalls = new Map();
+
+  function buildDedupKey(method, startTime) {
+    const normalizedMethod = method?.replace(/^\/+/, '') || '';
+    const ts = typeof startTime === 'number' ? Math.floor(startTime / 100) : 0;
+    return `${normalizedMethod}|${ts}`;
+  }
+
+  function isRecentlyProcessed(method, startTime) {
+    const key = buildDedupKey(method, startTime);
+    const now = Date.now();
+    for (const [k, ts] of recentlyProcessedCalls.entries()) {
+      if (now - ts > DEDUP_WINDOW_MS) recentlyProcessedCalls.delete(k);
+    }
+    if (recentlyProcessedCalls.has(key)) return true;
+    recentlyProcessedCalls.set(key, now);
+    return false;
+  }
+
   onMount(() => {
     applyTheme($theme);
     const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
@@ -30,17 +50,14 @@
       try {
         tabId = chrome.devtools.inspectedWindow.tabId;
 
-        // 設定全域函式，供 devtools.js 直接呼叫
         window.dispatchGrpcEvent = (data) => {
+          if (isRecentlyProcessed(data.method, data.startTime)) return;
           addLog(data);
         };
 
-        // 監聽來自 content-script / background 的訊息
         runtimeMessageListener = (message) => {
-          // 跳過 background relay 的重複訊息（只處理 content-script 直接送來的）
           if (message._relayedBy === "background") return;
 
-          // PostMessage Interceptor：前端 interceptor 直接送入已解碼的 call data
           if (
             message.type === "__GRPCWEB_DEVTOOLS__" &&
             message.action === "gRPCNetworkCall"
@@ -50,6 +67,9 @@
               : `/${message.method || ""}`;
             const parts = method.split("/");
             const endpoint = parts.pop() || parts.pop();
+            const startTime = resolveTimestampMs(message.timestamp);
+
+            if (isRecentlyProcessed(method, startTime)) return;
 
             addLog({
               id: `interceptor-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
@@ -68,7 +88,7 @@
                 : message.response,
               error: message.error,
               status: "finished",
-              startTime: resolveTimestampMs(message.timestamp),
+              startTime,
               _source: "interceptor",
             });
             return;
