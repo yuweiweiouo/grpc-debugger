@@ -17,29 +17,8 @@
   import { activePage } from "./stores/ui";
   import { listPaneWidth } from "./stores/layout";
   import { theme } from "./stores/settings";
-  import { resolveTimestampMs } from "./lib/time";
   let tabId;
   let runtimeMessageListener;
-
-  const DEDUP_WINDOW_MS = 2000;
-  const recentlyProcessedCalls = new Map();
-
-  function buildDedupKey(method, startTime) {
-    const normalizedMethod = method?.replace(/^\/+/, '') || '';
-    const ts = typeof startTime === 'number' ? Math.floor(startTime / 100) : 0;
-    return `${normalizedMethod}|${ts}`;
-  }
-
-  function isRecentlyProcessed(method, startTime) {
-    const key = buildDedupKey(method, startTime);
-    const now = Date.now();
-    for (const [k, ts] of recentlyProcessedCalls.entries()) {
-      if (now - ts > DEDUP_WINDOW_MS) recentlyProcessedCalls.delete(k);
-    }
-    if (recentlyProcessedCalls.has(key)) return true;
-    recentlyProcessedCalls.set(key, now);
-    return false;
-  }
 
   onMount(() => {
     applyTheme($theme);
@@ -51,48 +30,12 @@
         tabId = chrome.devtools.inspectedWindow.tabId;
 
         window.dispatchGrpcEvent = (data) => {
-          if (isRecentlyProcessed(data.method, data.startTime)) return;
           addLog(data);
         };
 
+        // 監聽來自 background 的訊息（主要處理 registerSchema）
         runtimeMessageListener = (message) => {
           if (message._relayedBy === "background") return;
-
-          if (
-            message.type === "__GRPCWEB_DEVTOOLS__" &&
-            message.action === "gRPCNetworkCall"
-          ) {
-            const method = message.method?.startsWith("/")
-              ? message.method
-              : `/${message.method || ""}`;
-            const parts = method.split("/");
-            const endpoint = parts.pop() || parts.pop();
-            const startTime = resolveTimestampMs(message.timestamp);
-
-            if (isRecentlyProcessed(method, startTime)) return;
-
-            addLog({
-              id: `interceptor-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-              method,
-              endpoint,
-              methodType: message.methodType || "unary",
-              request: message.request,
-              response: message.error
-                ? {
-                    _error:
-                      typeof message.error === "string"
-                        ? message.error
-                        : message.error.message || String(message.error),
-                    _code: message.error?.code,
-                  }
-                : message.response,
-              error: message.error,
-              status: "finished",
-              startTime,
-              _source: "interceptor",
-            });
-            return;
-          }
 
           // Schema 註冊：從 grpc-web-injector 或其他來源
           if (
