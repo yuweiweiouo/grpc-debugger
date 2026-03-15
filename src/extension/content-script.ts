@@ -27,6 +27,8 @@ if (window.__GRPC_DEBUGGER_CONTENT_SCRIPT_INJECTED__) {
 window.addEventListener("message", (event) => {
   if (event.source !== window) return;
   if (event.data && event.data.type === "__GRPCWEB_DEVTOOLS__") {
+    // gRPCNetworkCall 已透過佇列模式處理，跳過轉發避免重複
+    if (event.data.action === "gRPCNetworkCall") return;
     chrome.runtime.sendMessage(event.data);
   }
 });
