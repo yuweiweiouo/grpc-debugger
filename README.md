@@ -60,6 +60,13 @@ npm run build
 npm run preview
 ```
 
+## CI/CD
+
+- `CI`：在 push / pull request 時自動執行版本同步檢查、測試與建置。
+- `Release`：當程式碼推到 `main` 時，自動執行 patch 版號遞增、同步 `manifest.json` 與 `src/lib/version.ts`、建置套件、建立 tag 與 GitHub Release。
+- Release 產物名稱固定為 `release_v{version}.zip`，壓縮檔內包含可直接發佈的 extension build 結果。
+- Release Notes 會根據這次 push 到 `main` 的 commit 訊息，自動整理「這次改了什麼」。
+
 ## 授權
 
 MIT License

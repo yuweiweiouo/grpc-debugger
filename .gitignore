@@ -504,3 +504,5 @@ MigrationBackup/
 # End of https://www.toptal.com/developers/gitignore/api/svelte,vs,node
 .idea/
 .vscode/
+release_*.zip
+release_v*/

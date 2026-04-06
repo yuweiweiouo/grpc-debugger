@@ -1,0 +1,96 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.actor != 'github-actions[bot]' && !contains(github.event.head_commit.message, '[skip ci]')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests before release
+        run: npm test
+
+      - name: Resolve release note range
+        id: release_range
+        shell: bash
+        run: |
+          from_ref="${{ github.event.before }}"
+          if [ "$from_ref" = "0000000000000000000000000000000000000000" ]; then
+            from_ref="$(git rev-list --max-parents=0 HEAD)"
+          fi
+          echo "from=${from_ref}" >> "$GITHUB_OUTPUT"
+
+      - name: Bump patch version
+        id: version
+        shell: bash
+        run: |
+          npm version patch --no-git-tag-version
+          npm run version:sync
+          version="$(node -p "require('./package.json').version")"
+          tag="v${version}"
+          echo "value=${version}" >> "$GITHUB_OUTPUT"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+
+      - name: Generate release notes
+        run: >-
+          node scripts/generate-release-notes.mjs
+          --from "${{ steps.release_range.outputs.from }}"
+          --to "${{ github.sha }}"
+          --version "${{ steps.version.outputs.value }}"
+          --output RELEASE_NOTES.md
+
+      - name: Build release bundle
+        shell: bash
+        run: |
+          npm run build
+          archive_root="release_${{ steps.version.outputs.tag }}"
+          rm -rf "$archive_root" "${archive_root}.zip"
+          cp -R build "$archive_root"
+          zip -r "${archive_root}.zip" "$archive_root"
+          rm -rf "$archive_root"
+
+      - name: Commit release version
+        shell: bash
+        run: |
+          git add package.json package-lock.json public/manifest.json src/lib/version.ts
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m "chore: release ${{ steps.version.outputs.tag }} [skip ci]"
+          git tag "${{ steps.version.outputs.tag }}"
+
+      - name: Push release commit and tag
+        run: |
+          git push origin HEAD:main
+          git push origin "${{ steps.version.outputs.tag }}"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create "${{ steps.version.outputs.tag }}"
+          "release_${{ steps.version.outputs.tag }}.zip"
+          --title "${{ steps.version.outputs.tag }}"
+          --notes-file RELEASE_NOTES.md

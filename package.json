@@ -28,7 +28,9 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
+    "ci:verify": "npm run version:sync && npm test && npm run build",
     "version:sync": "node scripts/sync-version.mjs",
+    "release:notes": "node scripts/generate-release-notes.mjs",
     "version": "npm run version:sync",
     "vp": "npm version patch --no-git-tag-version",
     "release": "npm version patch --no-git-tag-version && npm run build"
