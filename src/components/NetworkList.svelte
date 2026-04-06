@@ -113,12 +113,6 @@
             class:pending={entry.status === "pending"}
           ></span>
 
-          {#if entry._source === "interceptor"}
-            <span class="source-tag source-p" title="PostMessage">P</span>
-          {:else}
-            <span class="source-tag source-r" title="Reflection">R</span>
-          {/if}
-
           <span
             class="method-name"
             class:pending-text={entry.status === "pending"}
@@ -130,7 +124,7 @@
 
         <div class="meta-col">
           <span class="time">
-            {entry.duration
+            {entry.duration !== undefined && entry.duration !== null
               ? `${Number(entry.duration).toFixed(2)}ms`
               : entry.status === "pending"
                 ? "..."
@@ -192,27 +186,6 @@
     overflow: hidden;
     min-width: 100px;
     flex: 1;
-  }
-
-  .source-tag {
-    font-size: 10px;
-    font-weight: bold;
-    padding: 2px 4px;
-    border-radius: 4px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-  }
-
-  .source-p {
-    background: var(--color-badge-p-bg);
-    color: var(--color-badge-p-text);
-  }
-
-  .source-r {
-    background: var(--color-badge-r-bg);
-    color: var(--color-badge-r-text);
   }
 
   .dot {

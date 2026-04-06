@@ -11,7 +11,6 @@ function extensionScripts() {
         'background',
         'content-script',
         'devtools',
-        'fetch-interceptor',
         'grpc-web-injector',
         'connect-web-interceptor',
       ];

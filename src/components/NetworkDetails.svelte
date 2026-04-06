@@ -19,7 +19,6 @@
   let activeTab = "request";
   let copyFeedback = "";
   let searchQuery = "";
-  let replayStatus = "";
   let currentMatchIndex = 0;
 
   function collectMatches(obj, query, prefix = '') {
@@ -119,7 +118,18 @@
   }
 
   async function handleCopy(data) {
-    const text = JSON.stringify(data, jsonReplacer, 2);
+    let text = '';
+
+    try {
+      text = JSON.stringify(data, jsonReplacer, 2);
+    } catch (e) {
+      copyFeedback = `${$t("serialize_failed")}: ${e.message}`;
+      setTimeout(() => {
+        copyFeedback = "";
+      }, 2000);
+      openCopyModal(data);
+      return;
+    }
 
     try {
       await navigator.clipboard.writeText(text);
@@ -169,57 +179,6 @@
     e.target.select();
   }
 
-  async function handleReplay() {
-    if (!entry?.url) {
-      replayStatus = $t('replay_no_data');
-      setTimeout(() => { replayStatus = ''; }, 2000);
-      return;
-    }
-
-    replayStatus = $t('replaying');
-
-    const headers = entry.requestHeaders || {};
-    const body = entry.requestRaw || null;
-    const isBase64 = entry.requestBase64Encoded;
-
-    const replayScript = `
-      (async function() {
-        try {
-          const headers = ${JSON.stringify(headers)};
-          ${isBase64 && body
-            ? `const raw = atob(${JSON.stringify(body)});
-               const bytes = new Uint8Array(raw.length);
-               for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
-               var bodyData = bytes.buffer;`
-            : body
-              ? `var bodyData = ${JSON.stringify(body)};`
-              : `var bodyData = null;`}
-          const resp = await fetch(${JSON.stringify(entry.url)}, {
-            method: 'POST',
-            headers,
-            body: bodyData,
-          });
-          return 'OK:' + resp.status;
-        } catch(e) {
-          return 'ERR:' + e.message;
-        }
-      })()
-    `;
-
-    if (typeof chrome !== 'undefined' && chrome.devtools?.inspectedWindow) {
-      chrome.devtools.inspectedWindow.eval(replayScript, (result, isException) => {
-        if (isException || !result || result.startsWith('ERR:')) {
-          replayStatus = $t('replay_failed');
-        } else {
-          replayStatus = $t('replay_success');
-        }
-        setTimeout(() => { replayStatus = ''; }, 2000);
-      });
-    } else {
-      replayStatus = $t('replay_failed');
-      setTimeout(() => { replayStatus = ''; }, 2000);
-    }
-  }
 </script>
 
 <div class="network-details">
@@ -254,9 +213,6 @@
       {#if copyFeedback}
         <span class="copy-feedback">{copyFeedback}</span>
       {/if}
-      {#if replayStatus}
-        <span class="copy-feedback">{replayStatus}</span>
-      {/if}
     </div>
 
     <div class="content">
@@ -275,28 +231,19 @@
             <span class="label">{$t("status")}:</span>
             <span class="val"
               >{entry.status === "pending"
-                ? "Pending (Waiting for Server...)"
+                ? $t("status_pending")
                 : entry.grpcStatus === 0
-                  ? "OK (0)"
-                  : `Error (${entry.grpcStatus})`}</span
+                  ? $t("status_ok")
+                  : `${$t("status_error")} (${entry.grpcStatus})`}</span
             >
           </div>
         </section>
         {#if entry.status === "pending"}
           <div class="pending-notice">
             <div class="spinner"></div>
-            <p>Waiting for response from server...</p>
+            <p>{$t("waiting_for_response")}</p>
           </div>
         {:else}
-          {#if entry.url}
-            <section>
-              <div class="replay-row">
-                <button class="replay-btn" on:click={handleReplay}>
-                  ▶ {$t('replay')}
-                </button>
-              </div>
-            </section>
-          {/if}
           {#if entry.requestHeaders}
             <section>
               <h3>{$t("request_headers")}</h3>
@@ -311,15 +258,15 @@
       {:else if activeTab === "request"}
         <div class="data-view">
           <div class="data-header">
-            <span>Request Data</span>
+            <span>{$t("request_data")}</span>
             {#if entry.request}
               <div class="header-actions">
                 <div class="search-nav">
                   <input class="search-input" type="text" placeholder={$t('search_in_data')} bind:value={searchQuery} on:keydown={handleSearchKeyDown} />
                   {#if searchQuery}
                     <span class="match-counter">{totalMatches > 0 ? `${safeIndex + 1}/${totalMatches}` : '0/0'}</span>
-                    <button class="nav-btn" on:click={goPrev} disabled={totalMatches === 0} title="Previous (Shift+Enter)">▲</button>
-                    <button class="nav-btn" on:click={goNext} disabled={totalMatches === 0} title="Next (Enter)">▼</button>
+                    <button class="nav-btn" on:click={goPrev} disabled={totalMatches === 0} title={$t('search_prev')}>▲</button>
+                    <button class="nav-btn" on:click={goNext} disabled={totalMatches === 0} title={$t('search_next')}>▼</button>
                   {/if}
                 </div>
                 <button class="copy-btn" on:click={() => handleCopy(entry.request)}>
@@ -337,15 +284,15 @@
       {:else if activeTab === "response"}
         <div class="data-view">
           <div class="data-header">
-            <span>Response Data</span>
+            <span>{$t("response_data")}</span>
             {#if entry.response}
               <div class="header-actions">
                 <div class="search-nav">
                   <input class="search-input" type="text" placeholder={$t('search_in_data')} bind:value={searchQuery} on:keydown={handleSearchKeyDown} />
                   {#if searchQuery}
                     <span class="match-counter">{totalMatches > 0 ? `${safeIndex + 1}/${totalMatches}` : '0/0'}</span>
-                    <button class="nav-btn" on:click={goPrev} disabled={totalMatches === 0} title="Previous (Shift+Enter)">▲</button>
-                    <button class="nav-btn" on:click={goNext} disabled={totalMatches === 0} title="Next (Enter)">▼</button>
+                    <button class="nav-btn" on:click={goPrev} disabled={totalMatches === 0} title={$t('search_prev')}>▲</button>
+                    <button class="nav-btn" on:click={goNext} disabled={totalMatches === 0} title={$t('search_next')}>▼</button>
                   {/if}
                 </div>
                 <button class="copy-btn" on:click={() => handleCopy(entry.response)}>
@@ -357,7 +304,7 @@
           {#if entry.response}
             <JsonTree data={entry.response} {searchQuery} {activePath} currentPath="" />
           {:else if entry.status === "pending"}
-            <div class="no-data">Waiting for response...</div>
+            <div class="no-data">{$t("waiting_for_response_short")}</div>
           {:else}
             <div class="no-data">{$t("no_data")}</div>
           {/if}
@@ -407,7 +354,7 @@
             {#if entry.response}
               <JsonTree data={entry.response} {searchQuery} activePath={!activeInReq ? activePath : null} currentPath="" />
             {:else if entry.status === "pending"}
-              <div class="no-data">Waiting for response...</div>
+              <div class="no-data">{$t("waiting_for_response_short")}</div>
             {:else}
               <div class="no-data">{$t("no_data")}</div>
             {/if}
@@ -702,28 +649,6 @@
   .copy-btn:hover {
     background: var(--color-bg-hover);
     border-color: var(--color-text-tertiary);
-  }
-
-  .replay-row {
-    display: flex;
-    gap: 8px;
-  }
-
-  .replay-btn {
-    background: var(--color-bg-secondary);
-    border: 1px solid var(--color-border);
-    border-radius: 6px;
-    padding: 6px 14px;
-    font-size: 12px;
-    color: var(--color-primary);
-    cursor: pointer;
-    font-weight: 500;
-    transition: all 0.15s;
-  }
-
-  .replay-btn:hover {
-    background: var(--color-primary-bg);
-    border-color: var(--color-primary);
   }
 
   .no-data {

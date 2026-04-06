@@ -1,34 +1,28 @@
-// @ts-nocheck
 /* global chrome */
-/**
- * gRPC Debugger 1.0 - Content Script
- * Relays messages from the page to the background script.
- */
 
-// v2.23: 防止重複注入
-if (window.__GRPC_DEBUGGER_CONTENT_SCRIPT_INJECTED__) {
-  console.log('[gRPC Debugger] Content script already active, skipping.');
-} else {
-  window.__GRPC_DEBUGGER_CONTENT_SCRIPT_INJECTED__ = true;
-  
-  const VERSION = "v2.23";
-  console.log(`%c[gRPC Debugger ${VERSION}] Content Script Active`, "background: #3b82f6; color: white; padding: 2px 5px; border-radius: 3px;");
+function injectScripts() {
+  const scripts = ['connect-web-interceptor.js', 'grpc-web-injector.js'];
 
-  const scripts = ["fetch-interceptor.js", "connect-web-interceptor.js", "grpc-web-injector.js"];
-  scripts.forEach(s => {
-    console.log(`[gRPC Debugger ${VERSION}] Injecting ${s}...`);
-    const script = document.createElement("script");
-    script.src = chrome.runtime.getURL(s);
+  scripts.forEach((name) => {
+    const script = document.createElement('script');
+    script.src = chrome.runtime.getURL(name);
+    script.async = false;
+    script.onload = () => script.remove();
     (document.head || document.documentElement).appendChild(script);
   });
 }
 
-// Relay messages from page to background
-window.addEventListener("message", (event) => {
-  if (event.source !== window) return;
-  if (event.data && event.data.type === "__GRPCWEB_DEVTOOLS__") {
-    // gRPCNetworkCall 已透過佇列模式處理，跳過轉發避免重複
-    if (event.data.action === "gRPCNetworkCall") return;
-    chrome.runtime.sendMessage(event.data);
-  }
-});
+if (window.__GRPC_DEBUGGER_CONTENT_SCRIPT_INJECTED__) {
+  console.log('[gRPC Debugger] Content script already active, skipping.');
+} else {
+  window.__GRPC_DEBUGGER_CONTENT_SCRIPT_INJECTED__ = true;
+
+  const VERSION = 'v2.25';
+
+  console.log(
+    `%c[gRPC Debugger ${VERSION}] Content Script Active`,
+    'background: #2563eb; color: white; padding: 2px 5px; border-radius: 3px;'
+  );
+
+  injectScripts();
+}

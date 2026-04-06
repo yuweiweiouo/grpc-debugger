@@ -360,16 +360,16 @@ class ProtoEngine {
         // 將官方的 Message 物件轉換為純 JS 物件（處理 BigInt 等相容性問題）
         return this._messageToObject(message, descMessage);
       } catch (e) {
-        // 錯誤排查：處理 HAR 編碼損壞的問題
-        // 許多瀏覽器開發者工具導出的 HAR 檔案會錯誤地將 binary 視為 UTF-8，導致數據損毀
+        // 錯誤排查：處理上游攔截時已經損壞的 binary payload
+        // 若頁面端或代理層把二進位內容錯當成文字處理，就可能在這裡解碼失敗
         const isEncodingCorruption = e.message.includes('wire type') || 
                                       e.message.includes('invalid');
         
         if (isEncodingCorruption) {
           const rawText = this._tryExtractReadableText(buffer);
           return {
-            _error: '二進位數據損毀 (可能是 HAR 編碼問題)',
-            _hint: '請求內容包含無法被 UTF-8 正確讀取的非 ASCII 位元組，這通常發生在抓包存檔時',
+            _error: '二進位數據損毀 (可能在攔截或轉碼時被破壞)',
+            _hint: '請求內容包含無法被 UTF-8 正確讀取的非 ASCII 位元組，表示上游傳遞過程可能把 binary 誤當成文字',
             _typeName: typeName,
             _rawText: rawText,
           };

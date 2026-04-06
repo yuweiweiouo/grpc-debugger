@@ -7,27 +7,13 @@
   import {
     filterValue,
     clearLogs,
-    reprocessAllLogs,
     preserveLog,
   } from "../stores/network";
-  import { enablePostMessage, enableReflection } from "../stores/settings";
   import { t } from "../lib/i18n";
-  import { Trash2, Search, RefreshCw } from "lucide-svelte";
-
-  let isReprocessing = false;
+  import { Trash2, Search } from "lucide-svelte";
 
   function handleClearLogs() {
     clearLogs(true);
-  }
-
-  async function handleReprocess() {
-    if (isReprocessing) return;
-    isReprocessing = true;
-    try {
-      await reprocessAllLogs();
-    } finally {
-      isReprocessing = false;
-    }
   }
 </script>
 
@@ -53,28 +39,6 @@
       <input type="checkbox" bind:checked={$preserveLog} />
       <span>{$t("preserve_log")}</span>
     </label>
-    <span class="separator">|</span>
-    <label class="preserve-checkbox">
-      <input type="checkbox" bind:checked={$enablePostMessage} />
-      <span>{$t("source_postmessage")}</span>
-    </label>
-    <label class="preserve-checkbox">
-      <input type="checkbox" bind:checked={$enableReflection} />
-      <span>{$t("source_reflection")}</span>
-    </label>
-  </div>
-
-  <div class="right">
-    <button
-      class="icon-btn"
-      on:click={handleReprocess}
-      title={$t("reprocess_logs")}
-      aria-label={$t("reprocess_logs")}
-      disabled={isReprocessing}
-      class:spinning={isReprocessing}
-    >
-      <RefreshCw size={16} />
-    </button>
   </div>
 </div>
 
@@ -93,12 +57,6 @@
     display: flex;
     align-items: center;
     gap: 10px;
-  }
-
-  .separator {
-    color: var(--color-border);
-    font-size: 12px;
-    user-select: none;
   }
 
   .preserve-checkbox {
@@ -159,31 +117,5 @@
   .icon-btn:hover {
     background: var(--color-bg-hover);
     color: var(--color-text-primary);
-  }
-
-
-  .right {
-    display: flex;
-    flex-direction: row;
-    align-items: center;
-    gap: 4px;
-  }
-
-  .icon-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .icon-btn.spinning :global(svg) {
-    animation: spin 1s linear infinite;
-  }
-
-  @keyframes spin {
-    from {
-      transform: rotate(0deg);
-    }
-    to {
-      transform: rotate(360deg);
-    }
   }
 </style>

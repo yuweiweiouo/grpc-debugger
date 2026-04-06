@@ -9,20 +9,10 @@
    */
   import {
     services,
-    clearAllSchemas,
-    reflectionStatus,
     toggleServiceVisibility,
   } from "../stores/schema";
   import { t } from "../lib/i18n";
-  import {
-    ShieldCheck,
-    Box,
-    RefreshCw,
-    AlertCircle,
-    CheckCircle2,
-    Eye,
-    EyeOff,
-  } from "lucide-svelte";
+  import { ShieldCheck, Box, Eye, EyeOff } from "lucide-svelte";
 </script>
 
 <div class="services-page">
@@ -30,23 +20,6 @@
     <div class="title">
       <ShieldCheck size={20} />
       <h2>{$t("loaded_services")}</h2>
-
-      {#if $reflectionStatus === "loading"}
-        <div class="status-badge loading">
-          <RefreshCw size={12} class="spin" />
-          <span>{$t("reflecting")}</span>
-        </div>
-      {:else if $reflectionStatus === "success"}
-        <div class="status-badge success">
-          <CheckCircle2 size={12} />
-          <span>{$t("sync_ok")}</span>
-        </div>
-      {:else if $reflectionStatus === "failed"}
-        <div class="status-badge error">
-          <AlertCircle size={12} />
-          <span>{$t("sync_failed")}</span>
-        </div>
-      {/if}
     </div>
   </header>
 
@@ -117,44 +90,6 @@
     margin: 0;
     font-size: 18px;
     font-weight: 600;
-  }
-
-  .status-badge {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 11px;
-    font-weight: 500;
-    padding: 4px 10px;
-    border-radius: 20px;
-  }
-
-  .status-badge.loading {
-    background: var(--color-primary-bg);
-    color: var(--color-primary);
-  }
-
-  .status-badge.success {
-    background: var(--color-success-bg);
-    color: var(--color-success);
-  }
-
-  .status-badge.error {
-    background: var(--color-error-bg);
-    color: var(--color-error);
-  }
-
-  @keyframes spin {
-    from {
-      transform: rotate(0deg);
-    }
-    to {
-      transform: rotate(360deg);
-    }
-  }
-
-  :global(.spin) {
-    animation: spin 2s linear infinite;
   }
 
   .service-grid {

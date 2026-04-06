@@ -1,4 +1,6 @@
 // @ts-nocheck
+import { ensureDebuggerBridge, normalizeMethodPath } from './page-bridge';
+
 /**
  * gRPC Debugger 1.0 - Frontend Injection Script
  * Redesigned for Connect-RPC and Buf ecosystem support.
@@ -15,74 +17,39 @@
 
   const VERSION = "v2.23";
   const postType = "__GRPCWEB_DEVTOOLS__";
+  const bridge = ensureDebuggerBridge(window);
+  const bridgeEventSource = '__GRPC_DEBUGGER_BRIDGE_EVENT__';
+
+  function createCallEvent(data) {
+    const timestamp = data.timestamp || Date.now();
+    return {
+      id: data.id || `postmessage-${timestamp}-${Math.random().toString(36).slice(2, 8)}`,
+      method: normalizeMethodPath(data.method),
+      methodType: data.methodType || 'unary',
+      request: data.request || null,
+      response: data.error
+        ? { _error: data.error.message || String(data.error), _code: data.error.code }
+        : data.response || null,
+      error: data.error || null,
+      url: data.url || '',
+      startTime: timestamp,
+      status: data.status || 'finished',
+      httpStatus: data.httpStatus ?? null,
+      grpcStatus: data.grpcStatus ?? (data.error?.code ?? 0),
+      grpcMessage: data.grpcMessage ?? (data.error?.message ?? null),
+      requestHeaders: data.requestHeaders || {},
+      responseHeaders: data.responseHeaders || {},
+      _source: 'postmessage',
+    };
+  }
   console.log(
     `%c[gRPC Debugger ${VERSION}] Injector Active`,
     "color: #8b5cf6; font-weight: bold;",
   );
 
-  // 安全初始化：支援舊版 clients array 傳入，攔截 grpc-web-pb
+  // 目前只保留 manual API 入口，註冊 clients 不會自動 hook。
   window.__GRPCWEB_DEVTOOLS__ = window.__GRPCWEB_DEVTOOLS__ || function (clients) {
-    if (!Array.isArray(clients)) return;
-    clients.forEach(client => {
-      if (!client) return;
-
-      // 支援 grpc-web-pb 的 Promise/Callback client
-      const target = client.client_ || client;
-      ['rpcCall', 'unaryCall'].forEach(methodName => {
-        const originalMethod = target[methodName];
-        if (typeof originalMethod === 'function') {
-          target[methodName] = function (method, request, metadata, methodInfo, callback) {
-            const startTime = Date.now();
-            let reqObj = request;
-            try { reqObj = request.toObject(); } catch (e) {}
-            
-            let wrappedCallback = callback;
-            if (typeof callback === 'function') {
-               wrappedCallback = function (...args) {
-                 const err = args[0];
-                 const response = args[1];
-                 let resObj = response;
-                 try { if (response) resObj = response.toObject(); } catch(e) {}
-                 
-                 if (window.__GRPCWEB_DEVTOOLS__?.sendCall) {
-                   window.__GRPCWEB_DEVTOOLS__.sendCall({
-                     method, methodType: 'unary', request: reqObj, response: resObj, error: err, timestamp: startTime
-                   });
-                 }
-                 return callback.apply(this, args);
-               };
-            }
-            
-            const result = originalMethod.call(this, method, request, metadata, methodInfo, wrappedCallback);
-            
-            // Promise Client
-            if (result && typeof result.then === 'function') {
-               result.then(
-                 res => {
-                   let resObj = res;
-                   try { if (res) resObj = res.toObject(); } catch(e) {}
-                   if (window.__GRPCWEB_DEVTOOLS__?.sendCall) {
-                     window.__GRPCWEB_DEVTOOLS__.sendCall({
-                       method, methodType: 'unary', request: reqObj, response: resObj, error: null, timestamp: startTime
-                     });
-                   }
-                   return res;
-                 },
-                 err => {
-                   if (window.__GRPCWEB_DEVTOOLS__?.sendCall) {
-                     window.__GRPCWEB_DEVTOOLS__.sendCall({
-                       method, methodType: 'unary', request: reqObj, response: null, error: err, timestamp: startTime
-                     });
-                   }
-                   throw err;
-                 }
-               );
-            }
-            return result;
-          };
-        }
-      });
-    });
+    return clients;
   };
 
   /**
@@ -143,14 +110,7 @@
       collectMessages(m.O);
     });
 
-    window.postMessage(
-      {
-        type: postType,
-        action: "registerSchema",
-        schema: { services, messages },
-      },
-      "*",
-    );
+    bridge.enqueueSchema({ services, messages }, 'frontend-api:service');
 
     console.log(`[gRPC Debugger] Registered service: ${service.typeName}`);
   };
@@ -189,24 +149,14 @@
 
     msgList.forEach(collect);
 
-    window.postMessage(
-      {
-        type: postType,
-        action: "registerSchema",
-        schema: { messages },
-      },
-      "*",
-    );
+    bridge.enqueueSchema({ messages }, 'frontend-api:messages');
 
     console.log("[gRPC Debugger] Registered message registry.");
   };
 
   // --- Backward Compatibility ---
   window.__GRPCWEB_DEVTOOLS__.registerProto = function (protoDefinition) {
-    window.postMessage(
-      { type: postType, action: "registerProto", proto: protoDefinition },
-      "*",
-    );
+    console.warn('[gRPC Debugger] registerProto 已停用，請改用 registerService / registerMessages');
   };
 
   window.__GRPCWEB_DEVTOOLS__.registerMethod = function (
@@ -214,15 +164,23 @@
     requestType,
     responseType,
   ) {
-    window.postMessage(
+    bridge.enqueueSchema(
       {
-        type: postType,
-        action: "registerMethod",
-        methodPath,
-        requestType,
-        responseType,
+        services: [
+          {
+            name: methodPath.split('/').slice(-2, -1)[0] || methodPath,
+            fullName: methodPath.split('/').slice(1, -1).join('.') || methodPath,
+            methods: [
+              {
+                name: methodPath.split('/').pop() || methodPath,
+                requestType,
+                responseType,
+              },
+            ],
+          },
+        ],
       },
-      "*",
+      'frontend-api:method'
     );
   };
   // -----------------------------
@@ -354,15 +312,7 @@
         const messageCount = Object.keys(result.messages).length;
 
         if (messageCount > 0) {
-          window.postMessage(
-            {
-              type: postType,
-              action: "registerSchema",
-              schema: result,
-              source: "auto-detect:google-protobuf",
-            },
-            "*",
-          );
+          bridge.enqueueSchema(result, 'auto-detect:google-protobuf');
           console.log(
             `[gRPC Debugger] Auto-registered ${messageCount} messages from window.proto`,
           );
@@ -382,14 +332,7 @@
     }
 
     // 通知 extension 是否找到本地 proto
-    window.postMessage(
-      {
-        type: postType,
-        action: "localProtoDetected",
-        found,
-      },
-      "*",
-    );
+    return found;
   }
 
   // ============================================================================
@@ -412,104 +355,35 @@
       return;
     }
 
-    window.postMessage(
-      {
-        type: postType,
-        action: "gRPCNetworkCall",
-        method: data.method,
-        methodType: data.methodType || "unary",
-        request: data.request || null,
-        response: data.response || null,
-        error: data.error || null,
-        timestamp: Date.now(),
-      },
-      "*",
-    );
+    bridge.enqueueCall(createCallEvent(data));
   };
 
   // ============================================================================
-  // Call Data 佇列：供 DevTools 直接讀取
-  // 
-  // 由於 chrome.runtime.sendMessage 從 background 到 devtools page 不穩定，
-  // 改用頁面全域佇列 + devtools.inspectedWindow.eval 直接讀取。
+  // Legacy postMessage 相容層
+  //
+  // 保留舊格式訊息的接入能力，但統一轉成 bridge hint / schema event。
   // ============================================================================
 
-  window.__GRPC_CALLS_QUEUE__ = window.__GRPC_CALLS_QUEUE__ || [];
-  window[PAGE_MANAGED_CALL_QUEUE_FLAG] = true;
-
-  /**
-   * 將 call data 推入佇列，供 devtools.js 透過 inspectedWindow.eval 讀取
-   */
-  function enqueueCall(callData) {
-    window.__GRPC_CALLS_QUEUE__.push(callData);
-    // 安全上限：防止記憶體無限增長（若 DevTools 未開啟）
-    if (window.__GRPC_CALLS_QUEUE__.length > 500) {
-      window.__GRPC_CALLS_QUEUE__ = window.__GRPC_CALLS_QUEUE__.slice(-200);
-    }
-  }
-
-  /** 最近已處理的 call 快取，用於防止同一 call 的多種 postMessage 格式造成重複 */
-  const recentCalls = new Map();
-  const DEDUP_WINDOW_MS = 500;
-
-  /**
-   * 從 method 路徑提取 endpoint 名稱做為去重 key 的一部分
-   */
-  function extractEndpointForDedup(method) {
-    if (!method) return '';
-    const bracketMatch = method.match(/^(\w+)\s*\[/);
-    if (bracketMatch) return bracketMatch[1];
-    return method.split('/').filter(Boolean).pop() || method;
-  }
-
-  /**
-   * 將 "Method [pkg.Service]" 格式正規化為 "pkg.Service/Method"
-   */
-  function normalizeMethodPath(rawUrl) {
-    if (!rawUrl) return '';
-    const match = rawUrl.match(/^(\w+)\s*\[([^\]]+)\]$/);
-    if (match) {
-      return `${match[2]}/${match[1]}`;
-    }
-    return rawUrl;
-  }
-
-  /**
-   * 檢查此 call 是否已在短時間內被處理過
-   * @returns {boolean} true = 已處理過，應跳過
-   */
-  function isDuplicateCall(endpoint) {
-    const now = Date.now();
-    for (const [key, ts] of recentCalls.entries()) {
-      if (now - ts > DEDUP_WINDOW_MS) recentCalls.delete(key);
-    }
-    if (recentCalls.has(endpoint)) return true;
-    recentCalls.set(endpoint, now);
-    return false;
-  }
-
   window.addEventListener("message", (event) => {
-    if (event.source !== window) return;
     const msg = event.data;
 
-    // 格式 1：__GRPCWEB_DEVTOOLS__ type + gRPCNetworkCall action
-    if (msg?.type === postType && msg?.action === "gRPCNetworkCall") {
-      const endpoint = extractEndpointForDedup(msg.method);
-      if (isDuplicateCall(endpoint)) return;
-
-      // 存入佇列，供 devtools.js 直接讀取
-      enqueueCall({
-        method: msg.method || '',
-        methodType: msg.methodType || 'unary',
-        request: msg.request || null,
-        response: msg.response || null,
-        error: msg.error || null,
-        timestamp: msg.timestamp || Date.now(),
-      });
+    if (msg?.source === bridgeEventSource && msg?.action === 'enqueueBridgeEvent' && msg.payload) {
+      bridge.enqueueEvent(msg.payload);
       return;
     }
 
-    // 格式 2：grpc-web-devtools source 協定（如 devtool.ts 的第二個 postMessage）
+    if (event.source !== window) return;
+
+    if (msg?.type === postType && msg?.action === 'registerSchema' && msg.schema) {
+      bridge.enqueueSchema(msg.schema, msg.source || 'legacy-postmessage');
+      return;
+    }
+
+    if (msg?.type === postType && msg?.action === 'gRPCNetworkCall') {
+      bridge.enqueueCall(createCallEvent(msg));
+      return;
+    }
+
     if (
       msg?.source === "grpc-web-devtools" &&
       msg?.action?.type === "unary-request"
@@ -517,36 +391,17 @@
       const payload = msg.action.payload?.partial;
       if (!payload) return;
 
-      // 去重：若 format 1 已經送過同一個 call，跳過
-      const endpoint = extractEndpointForDedup(payload.url);
-      if (isDuplicateCall(endpoint)) {
-        return;
-      }
-
-      // 將 "Method [Service]" 格式正規化為 "Service/Method"
-      const method = normalizeMethodPath(payload.url) || payload.url || '';
-
-      window.postMessage(
-        {
-          type: postType,
-          action: "gRPCNetworkCall",
-          method,
-          methodType: payload.type || "unary",
-          request: payload.request || null,
-          response: payload.response?.body || payload.response || null,
-          error:
-            payload.status && payload.status !== 0
-              ? { code: payload.status, message: String(payload.response) }
-              : null,
-          timestamp: payload.id || Date.now(),
-          _grpcWebDevtools: true,
-        },
-        "*",
-      );
-
-      console.log(
-        `[gRPC Debugger] Relayed grpc-web-devtools call: ${method}`,
-      );
+      bridge.enqueueCall(createCallEvent({
+        method: normalizeMethodPath(payload.url) || payload.url || '',
+        methodType: payload.type || 'unary',
+        request: payload.request || null,
+        response: payload.response?.body || payload.response || null,
+        error:
+          payload.status && payload.status !== 0
+            ? { code: payload.status, message: String(payload.response) }
+            : null,
+        timestamp: payload.id || Date.now(),
+      }));
       return;
     }
   });
@@ -562,4 +417,3 @@
 
   window.dispatchEvent(new CustomEvent("grpc-web-dev-tools-ready"));
 })();
-import { PAGE_MANAGED_CALL_QUEUE_FLAG } from './call-queue-mode.ts';

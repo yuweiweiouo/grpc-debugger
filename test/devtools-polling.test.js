@@ -25,13 +25,13 @@ describe('devtools polling helpers', () => {
 
   describe('computeNextPollDelay', () => {
     it('有新資料時應立即回到基準 polling 間隔', () => {
-      expect(computeNextPollDelay({ hadCalls: true, currentDelayMs: 2400 })).toBe(300);
+      expect(computeNextPollDelay({ hadCalls: true, currentDelayMs: 2400 })).toBe(60);
     });
 
     it('idle 時應逐步退避，但不超過上限', () => {
-      expect(computeNextPollDelay({ hadCalls: false, currentDelayMs: 300 })).toBe(600);
-      expect(computeNextPollDelay({ hadCalls: false, currentDelayMs: 600 })).toBe(1200);
-      expect(computeNextPollDelay({ hadCalls: false, currentDelayMs: 2400 })).toBe(2400);
+      expect(computeNextPollDelay({ hadCalls: false, currentDelayMs: 60 })).toBe(120);
+      expect(computeNextPollDelay({ hadCalls: false, currentDelayMs: 120 })).toBe(240);
+      expect(computeNextPollDelay({ hadCalls: false, currentDelayMs: 600 })).toBe(600);
     });
   });
 });

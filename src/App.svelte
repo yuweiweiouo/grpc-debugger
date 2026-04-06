@@ -6,19 +6,19 @@
    * 並根據 activePage 狀態切換不同的視圖。
    */
   import { onMount, onDestroy } from "svelte";
+  import { get } from "svelte/store";
   import Sidebar from "./components/Sidebar.svelte";
   import Toolbar from "./components/Toolbar.svelte";
   import NetworkList from "./components/NetworkList.svelte";
   import NetworkDetails from "./components/NetworkDetails.svelte";
   import ServicesView from "./components/ServicesView.svelte";
   import SettingsView from "./components/SettingsView.svelte";
-  import { addLog, clearLogs } from "./stores/network";
-  import { registerSchema } from "./stores/schema";
+  import { addLog, clearLogs, preserveLog } from "./stores/network";
+  import { clearAllSchemas, registerSchema } from "./stores/schema";
   import { activePage } from "./stores/ui";
   import { listPaneWidth } from "./stores/layout";
   import { theme } from "./stores/settings";
   let tabId;
-  let runtimeMessageListener;
 
   onMount(() => {
     applyTheme($theme);
@@ -33,19 +33,9 @@
           addLog(data);
         };
 
-        // 監聽來自 background 的訊息（主要處理 registerSchema）
-        runtimeMessageListener = (message) => {
-          if (message._relayedBy === "background") return;
-
-          // Schema 註冊：從 grpc-web-injector 或其他來源
-          if (
-            message.type === "__GRPCWEB_DEVTOOLS__" &&
-            message.action === "registerSchema"
-          ) {
-            registerSchema(message.schema, message.source || "");
-          }
+        window.dispatchSchemaEvent = ({ schema, source }) => {
+          registerSchema(schema, source || "page-bridge");
         };
-        chrome.runtime.onMessage.addListener(runtimeMessageListener);
 
         // 監聽頁面重新載入以清除日誌
         if (chrome.tabs && chrome.tabs.onUpdated) {
@@ -60,20 +50,21 @@
   onDestroy(() => {
     if (typeof window !== "undefined") {
       delete window.dispatchGrpcEvent;
+      delete window.dispatchSchemaEvent;
       const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
       mediaQuery.removeEventListener('change', onSystemThemeChange);
     }
     if (typeof chrome !== "undefined" && chrome.tabs?.onUpdated) {
       chrome.tabs.onUpdated.removeListener(onTabUpdated);
     }
-    if (typeof chrome !== "undefined" && runtimeMessageListener) {
-      chrome.runtime?.onMessage?.removeListener(runtimeMessageListener);
-    }
   });
 
   function onTabUpdated(tId, { status }) {
     if (tId === tabId && status === "loading") {
       clearLogs();
+      if (!get(preserveLog)) {
+        clearAllSchemas();
+      }
     }
   }
 
