@@ -227,6 +227,18 @@
             <span class="label">{$t("url")}:</span>
             <span class="val">{entry.url}</span>
           </div>
+          {#if entry._debugIngress}
+            <div class="field">
+              <span class="label">{$t("debug_ingress")}:</span>
+              <span class="val">{entry._debugIngress}</span>
+            </div>
+          {/if}
+          {#if entry._debugFrameHref}
+            <div class="field">
+              <span class="label">{$t("debug_frame_href")}:</span>
+              <span class="val">{entry._debugFrameHref}</span>
+            </div>
+          {/if}
           <div class="field">
             <span class="label">{$t("status")}:</span>
             <span class="val"

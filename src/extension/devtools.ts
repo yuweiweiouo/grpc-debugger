@@ -59,6 +59,22 @@ function dispatchSchema(data) {
   pushPending(pendingSchemas, data);
 }
 
+function dispatchPageContext(pageHref) {
+  if (panelWindow?.dispatchPageContext && typeof pageHref === 'string' && pageHref) {
+    panelWindow.dispatchPageContext({ pageHref });
+  }
+}
+
+function shouldDispatchCallForPage(data, pageHref) {
+  const frameHref = typeof data?._debugFrameHref === 'string' ? data._debugFrameHref : '';
+
+  if (!pageHref || !frameHref) {
+    return true;
+  }
+
+  return frameHref === pageHref;
+}
+
 function flushPendingEntries() {
   if (!panelWindow || !panelWindow.dispatchGrpcEvent || !panelWindow.dispatchSchemaEvent) {
     return;
@@ -81,16 +97,20 @@ function pollBridgeEvents() {
         return '${EMPTY_POLL_RESULT}';
       }
 
+      var pageHref = window.location.href || '';
       var events = queue.slice();
       queue.splice(0, queue.length);
-      return JSON.stringify(events);
+      return JSON.stringify({ pageHref: pageHref, events: events });
     })()`,
     (result, isException) => {
       let hadEvents = false;
 
       try {
-        const events = isException ? [] : decodePolledCalls(result);
+        const { pageHref, events } = isException
+          ? { pageHref: '', events: [] }
+          : decodePolledCalls(result);
         hadEvents = events.length > 0;
+        dispatchPageContext(pageHref);
 
         for (const event of events) {
           if (event?.kind === 'schema' && event.data) {
@@ -98,7 +118,7 @@ function pollBridgeEvents() {
             continue;
           }
 
-          if (event?.kind === 'call' && event.data) {
+          if (event?.kind === 'call' && event.data && shouldDispatchCallForPage(event.data, pageHref)) {
             dispatchCall(event.data);
           }
         }

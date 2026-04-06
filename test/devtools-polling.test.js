@@ -8,9 +8,9 @@ import {
 describe('devtools polling helpers', () => {
   describe('decodePolledCalls', () => {
     it('空佇列 sentinel 不應觸發 JSON parse', () => {
-      expect(decodePolledCalls(EMPTY_POLL_RESULT)).toEqual([]);
-      expect(decodePolledCalls('')).toEqual([]);
-      expect(decodePolledCalls(null)).toEqual([]);
+      expect(decodePolledCalls(EMPTY_POLL_RESULT)).toEqual({ pageHref: '', events: [] });
+      expect(decodePolledCalls('')).toEqual({ pageHref: '', events: [] });
+      expect(decodePolledCalls(null)).toEqual({ pageHref: '', events: [] });
     });
 
     it('應保留頁面佇列中的 FIFO 順序', () => {
@@ -19,7 +19,19 @@ describe('devtools polling helpers', () => {
         { method: '/svc/Second', timestamp: 2 },
       ];
 
-      expect(decodePolledCalls(JSON.stringify(calls))).toEqual(calls);
+      expect(decodePolledCalls(JSON.stringify(calls))).toEqual({ pageHref: '', events: calls });
+    });
+
+    it('應解析包含當前頁面 href 的 polling 結果', () => {
+      expect(
+        decodePolledCalls(JSON.stringify({
+          pageHref: 'https://example.test/products',
+          events: [{ method: '/svc/First', timestamp: 1 }],
+        }))
+      ).toEqual({
+        pageHref: 'https://example.test/products',
+        events: [{ method: '/svc/First', timestamp: 1 }],
+      });
     });
   });
 

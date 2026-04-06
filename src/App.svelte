@@ -17,8 +17,11 @@
   import { clearAllSchemas, registerSchema } from "./stores/schema";
   import { activePage } from "./stores/ui";
   import { listPaneWidth } from "./stores/layout";
-  import { theme } from "./stores/settings";
-  let tabId;
+  import {
+    shouldCaptureCall,
+    setInspectedPageHref,
+    theme,
+  } from "./stores/settings";
 
   onMount(() => {
     applyTheme($theme);
@@ -27,19 +30,26 @@
 
     if (typeof chrome !== "undefined" && chrome.devtools) {
       try {
-        tabId = chrome.devtools.inspectedWindow.tabId;
+        syncInspectedPageContext();
 
         window.dispatchGrpcEvent = (data) => {
-          addLog(data);
+          if (shouldCaptureCall(data)) {
+            addLog(data);
+          }
         };
 
         window.dispatchSchemaEvent = ({ schema, source }) => {
           registerSchema(schema, source || "page-bridge");
         };
 
-        // 監聽頁面重新載入以清除日誌
-        if (chrome.tabs && chrome.tabs.onUpdated) {
-          chrome.tabs.onUpdated.addListener(onTabUpdated);
+        window.dispatchPageContext = ({ pageHref }) => {
+          if (typeof pageHref === 'string') {
+            setInspectedPageHref(pageHref);
+          }
+        };
+
+        if (chrome.devtools.network?.onNavigated) {
+          chrome.devtools.network.onNavigated.addListener(onNavigated);
         }
       } catch (error) {
         console.warn("DevTools API not available:", error);
@@ -51,20 +61,35 @@
     if (typeof window !== "undefined") {
       delete window.dispatchGrpcEvent;
       delete window.dispatchSchemaEvent;
+      delete window.dispatchPageContext;
       const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
       mediaQuery.removeEventListener('change', onSystemThemeChange);
     }
-    if (typeof chrome !== "undefined" && chrome.tabs?.onUpdated) {
-      chrome.tabs.onUpdated.removeListener(onTabUpdated);
+    if (typeof chrome !== "undefined" && chrome.devtools?.network?.onNavigated) {
+      chrome.devtools.network.onNavigated.removeListener(onNavigated);
     }
   });
 
-  function onTabUpdated(tId, { status }) {
-    if (tId === tabId && status === "loading") {
-      clearLogs();
-      if (!get(preserveLog)) {
-        clearAllSchemas();
+  function syncInspectedPageContext() {
+    if (typeof chrome === 'undefined' || !chrome.devtools?.inspectedWindow?.eval) {
+      return;
+    }
+
+    chrome.devtools.inspectedWindow.eval('window.location.href', (result, isException) => {
+      if (!isException && typeof result === 'string') {
+        setInspectedPageHref(result);
       }
+    });
+  }
+
+  function onNavigated(url) {
+    if (typeof url === 'string') {
+      setInspectedPageHref(url);
+    }
+
+    clearLogs();
+    if (!get(preserveLog)) {
+      clearAllSchemas();
     }
   }
 

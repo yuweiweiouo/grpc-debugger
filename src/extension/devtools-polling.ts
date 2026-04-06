@@ -4,11 +4,24 @@ export const EMPTY_POLL_RESULT = '__GRPC_DEBUGGER_EMPTY__';
 
 export function decodePolledCalls(result) {
   if (!result || result === EMPTY_POLL_RESULT) {
-    return [];
+    return {
+      pageHref: '',
+      events: [],
+    };
   }
 
   const parsed = JSON.parse(result);
-  return Array.isArray(parsed) ? parsed : [];
+  if (Array.isArray(parsed)) {
+    return {
+      pageHref: '',
+      events: parsed,
+    };
+  }
+
+  return {
+    pageHref: typeof parsed?.pageHref === 'string' ? parsed.pageHref : '',
+    events: Array.isArray(parsed?.events) ? parsed.events : [],
+  };
 }
 
 export function computeNextPollDelay({

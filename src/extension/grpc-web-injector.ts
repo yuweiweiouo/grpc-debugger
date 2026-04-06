@@ -20,11 +20,29 @@ import { ensureDebuggerBridge, normalizeMethodPath } from './page-bridge';
   const bridge = ensureDebuggerBridge(window);
   const bridgeEventSource = '__GRPC_DEBUGGER_BRIDGE_EVENT__';
 
-  function createCallEvent(data) {
+  function emitIngressDebugLog(ingress, data) {
+    try {
+      console.info('[gRPC Debugger] call ingress', {
+        ingress,
+        method: normalizeMethodPath(data?.method),
+        hasRequest: data?.request != null,
+        hasResponse: data?.response != null,
+        hasError: data?.error != null,
+        frameHref: window.location.href,
+        timestamp: data?.timestamp || Date.now(),
+      });
+    } catch {
+      // ignore debug log failures
+    }
+  }
+
+  function createCallEvent(data, ingress = 'unknown') {
     const timestamp = data.timestamp || Date.now();
+    const method = normalizeMethodPath(data.method);
+
     return {
       id: data.id || `postmessage-${timestamp}-${Math.random().toString(36).slice(2, 8)}`,
-      method: normalizeMethodPath(data.method),
+      method,
       methodType: data.methodType || 'unary',
       request: data.request || null,
       response: data.error
@@ -40,6 +58,8 @@ import { ensureDebuggerBridge, normalizeMethodPath } from './page-bridge';
       requestHeaders: data.requestHeaders || {},
       responseHeaders: data.responseHeaders || {},
       _source: 'postmessage',
+      _debugIngress: ingress,
+      _debugFrameHref: window.location.href,
     };
   }
   console.log(
@@ -355,7 +375,8 @@ import { ensureDebuggerBridge, normalizeMethodPath } from './page-bridge';
       return;
     }
 
-    bridge.enqueueCall(createCallEvent(data));
+    emitIngressDebugLog('manual-sendCall', data);
+    bridge.enqueueCall(createCallEvent(data, 'manual-sendCall'));
   };
 
   // ============================================================================
@@ -380,7 +401,8 @@ import { ensureDebuggerBridge, normalizeMethodPath } from './page-bridge';
     }
 
     if (msg?.type === postType && msg?.action === 'gRPCNetworkCall') {
-      bridge.enqueueCall(createCallEvent(msg));
+      emitIngressDebugLog('legacy-postmessage', msg);
+      bridge.enqueueCall(createCallEvent(msg, 'legacy-postmessage'));
       return;
     }
 
@@ -391,7 +413,7 @@ import { ensureDebuggerBridge, normalizeMethodPath } from './page-bridge';
       const payload = msg.action.payload?.partial;
       if (!payload) return;
 
-      bridge.enqueueCall(createCallEvent({
+      const normalizedPayload = {
         method: normalizeMethodPath(payload.url) || payload.url || '',
         methodType: payload.type || 'unary',
         request: payload.request || null,
@@ -401,7 +423,10 @@ import { ensureDebuggerBridge, normalizeMethodPath } from './page-bridge';
             ? { code: payload.status, message: String(payload.response) }
             : null,
         timestamp: payload.id || Date.now(),
-      }));
+      };
+
+      emitIngressDebugLog('grpc-web-devtools', normalizedPayload);
+      bridge.enqueueCall(createCallEvent(normalizedPayload, 'grpc-web-devtools'));
       return;
     }
   });

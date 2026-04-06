@@ -9,6 +9,10 @@
     clearLogs,
     preserveLog,
   } from "../stores/network";
+  import {
+    listenLegacyPostmessage,
+    listenGrpcWebDevtools,
+  } from "../stores/settings";
   import { t } from "../lib/i18n";
   import { Trash2, Search } from "lucide-svelte";
 
@@ -39,6 +43,14 @@
       <input type="checkbox" bind:checked={$preserveLog} />
       <span>{$t("preserve_log")}</span>
     </label>
+    <label class="preserve-checkbox">
+      <input type="checkbox" bind:checked={$listenLegacyPostmessage} />
+      <span>[{$t("source")}] {$t("listen_legacy_postmessage")}</span>
+    </label>
+    <label class="preserve-checkbox">
+      <input type="checkbox" bind:checked={$listenGrpcWebDevtools} />
+      <span>[{$t("source")}] {$t("listen_grpc_web_devtools")}</span>
+    </label>
   </div>
 </div>
 
@@ -48,7 +60,7 @@
     align-items: center;
     justify-content: space-between;
     padding: 8px 12px;
-    height: 48px;
+    min-height: 48px;
     box-sizing: border-box;
   }
 
@@ -56,6 +68,7 @@
     flex: 1;
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: 10px;
   }
 
