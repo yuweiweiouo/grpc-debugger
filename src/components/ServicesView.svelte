@@ -13,6 +13,8 @@
     reflectionStatus,
     toggleServiceVisibility,
   } from "../stores/schema";
+  import { setHiddenServices } from "../stores/inspector";
+  import { get } from "svelte/store";
   import { t } from "../lib/i18n";
   import {
     ShieldCheck,
@@ -20,9 +22,16 @@
     RefreshCw,
     AlertCircle,
     CheckCircle2,
-    Eye,
-    EyeOff,
   } from "lucide-svelte";
+
+  function handleVisibilityToggle(fullName) {
+    toggleServiceVisibility(fullName);
+    setHiddenServices(
+      get(services)
+        .filter((service) => service.hidden)
+        .map((service) => service.fullName),
+    );
+  }
 </script>
 
 <div class="services-page">
@@ -52,7 +61,7 @@
 
   <div class="service-grid">
     {#each $services as service}
-      <div class="service-card">
+      <div class="service-card" class:disabled={service.hidden}>
         <div class="card-header">
           <div class="header-left">
             <Box size={16} color={service.hidden ? "#9ca3af" : "#8b5cf6"} />
@@ -62,23 +71,14 @@
           </div>
           <button
             class="visibility-toggle"
-            class:hidden={service.hidden}
-            on:click={() => toggleServiceVisibility(service.fullName)}
+            class:enable={service.hidden}
+            on:click={() => handleVisibilityToggle(service.fullName)}
             title={service.hidden ? $t("show_in_log") : $t("hide_from_log")}
           >
-            {#if service.hidden}
-              <EyeOff size={14} />
-            {:else}
-              <Eye size={14} />
-            {/if}
+            {service.hidden ? $t("enable_service") : $t("disable_service")}
           </button>
         </div>
         <h3 class:muted={service.hidden}>{service.name}</h3>
-        <div class="methods">
-          {#each service.methods as method}
-            <div class="method-chip">{method.name}</div>
-          {/each}
-        </div>
       </div>
     {/each}
 
@@ -169,6 +169,19 @@
     border-radius: 12px;
     padding: 20px;
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+    transition: background 0.2s, border-color 0.2s, box-shadow 0.2s;
+  }
+
+  .service-card.disabled {
+    background: var(--color-bg-tertiary);
+    border-style: dashed;
+    box-shadow: none;
+  }
+
+  .service-card.disabled .header-left,
+  .service-card.disabled h3 {
+    filter: grayscale(1);
+    opacity: 0.45;
   }
 
   .card-header {
@@ -195,7 +208,7 @@
   }
 
   h3 {
-    margin: 0 0 16px 0;
+    margin: 0;
     font-size: 16px;
     color: var(--color-text-primary);
     transition: color 0.2s;
@@ -209,44 +222,26 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 24px;
-    height: 24px;
-    padding: 0;
-    background: transparent;
-    border: none;
-    border-radius: 4px;
-    color: var(--color-text-tertiary);
+    min-height: 26px;
+    padding: 4px 9px;
+    background: var(--color-error-bg);
+    border: 1px solid var(--color-error);
+    border-radius: 6px;
+    color: var(--color-error);
+    font-size: 11px;
+    font-weight: 500;
     cursor: pointer;
     transition: all 0.2s;
   }
 
   .visibility-toggle:hover {
-    background: var(--color-bg-hover);
-    color: var(--color-purple);
+    filter: brightness(0.94);
   }
 
-  .visibility-toggle.hidden {
-    color: var(--color-error);
-  }
-
-  .visibility-toggle.hidden:hover {
-    background: var(--color-error-bg);
-    color: var(--color-error);
-  }
-
-  .methods {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-  }
-
-  .method-chip {
-    font-size: 10px;
-    background: var(--color-bg-tertiary);
-    color: var(--color-text-secondary);
-    padding: 2px 8px;
-    border-radius: 4px;
-    border: 1px solid var(--color-border);
+  .visibility-toggle.enable {
+    background: var(--color-primary);
+    border-color: var(--color-primary);
+    color: white;
   }
 
   .empty-state {

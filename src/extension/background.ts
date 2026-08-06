@@ -16,6 +16,7 @@ const endpointTypes = new Map();
 const rpcMethodCache = new Map();
 const pendingCalls = new Map();
 const networkRequests = new Map();
+const hiddenServicesByTab = new Map();
 let recordMutation = Promise.resolve();
 
 chrome.sidePanel
@@ -64,6 +65,10 @@ async function handleMessage(message) {
       };
     case 'records':
       return { records: await getRecords(message.tabId) };
+    case 'setHiddenServices':
+      hiddenServicesByTab.set(message.tabId, new Set(message.services ?? []));
+      await chrome.storage.local.set({ [hiddenServicesStorageKey(message.tabId)]: message.services ?? [] });
+      return {};
     case 'clear':
       await clearRecords(message.tabId);
       return {};
@@ -74,6 +79,8 @@ async function handleMessage(message) {
 
 async function startInspecting(tabId, urlFilter) {
   if (!Number.isInteger(tabId)) throw new Error('無效的分頁 ID');
+  const storedHidden = (await chrome.storage.local.get(hiddenServicesStorageKey(tabId)))[hiddenServicesStorageKey(tabId)] ?? [];
+  hiddenServicesByTab.set(tabId, new Set(storedHidden));
   const normalizedFilter = urlFilter.trim();
   const target = { tabId };
   if (!(await isAttached(tabId))) await chrome.debugger.attach(target, PROTOCOL_VERSION);
@@ -134,6 +141,10 @@ async function isAttached(tabId) {
 
 async function handlePaused(source, params) {
   if (source.tabId == null) return;
+  if (isServiceHidden(source.tabId, params?.data?.url)) {
+    await resumeDebugger(source);
+    return;
+  }
   const targetKey = debuggerTargetKey(source);
   if (processingTargets.has(targetKey)) {
     await resumeDebugger(source);
@@ -331,6 +342,7 @@ async function getMethodTypeHandles(source, methodObjectId) {
 
 function handleRequestWillBeSent(source, params) {
   if (source.tabId == null || !params?.requestId || !params?.request?.url) return;
+  if (isServiceHidden(source.tabId, params.request.url)) return;
   const endpoint = findKnownEndpoint(source, params.request.url);
   if (!endpoint) return;
   const key = endpointKey(source, endpoint);
@@ -517,6 +529,7 @@ function patchRecord(id, patch) { return mutateRecords((records) => records.map(
 async function getRecords(tabId) { const stored = await chrome.storage.local.get(RECORDS_KEY); return (stored[RECORDS_KEY] ?? []).filter((record) => record.tabId === tabId); }
 function clearRecords(tabId) { return mutateRecords((records) => records.filter((record) => record.tabId !== tabId)); }
 function clearRuntimeStateForTab(tabId) {
+  hiddenServicesByTab.delete(tabId);
   const prefix = `${tabId}:`;
   for (const key of endpointTypes.keys()) if (key.startsWith(prefix)) endpointTypes.delete(key);
   for (const key of rpcMethodCache.keys()) if (key.startsWith(prefix)) rpcMethodCache.delete(key);
@@ -527,6 +540,16 @@ function endpointKey(source, endpoint) { return `${source.tabId}:${source.sessio
 function debuggerTargetKey(source) { return `${source.tabId}:${source.sessionId ?? 'root'}`; }
 function networkRequestKey(source, requestId) { return `${debuggerTargetKey(source)}:${requestId}`; }
 function configStorageKey(tabId) { return `protobufTsInspectorConfig:${tabId}`; }
+function hiddenServicesStorageKey(tabId) { return `protobufTsInspectorHiddenServices:${tabId}`; }
+function isServiceHidden(tabId, rawUrl) {
+  const hidden = hiddenServicesByTab.get(tabId);
+  if (!hidden?.size || !rawUrl) return false;
+  try {
+    return new URL(rawUrl).pathname.split('/').some((segment) => hidden.has(decodeURIComponent(segment)));
+  } catch {
+    return false;
+  }
+}
 function send(target, method, params) { return chrome.debugger.sendCommand(target, method, params); }
 
 async function resumeDebugger(source) {

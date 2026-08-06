@@ -29,19 +29,12 @@ export const preserveLog = writable(false);
  * 根據使用者輸入的關鍵字以及服務的隱藏設定進行即時過濾。
  */
 export const filteredLog = derived(
-  [log, filterValue, services],
-  ([$log, $filterValue, $services]) => {
-    const hiddenServicePrefixes = new Set(
-      $services
-        .filter(service => service.hidden)
-        .map(service => `/${service.fullName}/`)
-    );
+  [log, filterValue],
+  ([$log, $filterValue]) => {
     const lowerFilter = $filterValue.toLowerCase();
 
     return $log.filter(entry => {
-      if (isEntryHidden(entry, hiddenServicePrefixes)) return false;
-
-      // 2. 關鍵字過濾：比對方法名或 Endpoint
+      // 關鍵字過濾：比對方法名或 Endpoint
       if (!$filterValue) return true;
       const method = typeof entry.method === 'string' ? entry.method : '';
       const endpoint = typeof entry.endpoint === 'string' ? entry.endpoint : '';
@@ -112,18 +105,6 @@ export async function addLog(entry) {
   if (isNewSchema) {
     await reprocessAllLogs();
   }
-}
-
-function isEntryHidden(entry, hiddenServicePrefixes) {
-  if (!entry?.method || hiddenServicePrefixes.size === 0) return false;
-  const servicePrefix = getMethodServicePrefix(entry.method);
-  return hiddenServicePrefixes.has(servicePrefix);
-}
-
-function getMethodServicePrefix(method) {
-  const serviceEndIdx = method.indexOf('/', 1);
-  if (serviceEndIdx === -1) return '';
-  return method.slice(0, serviceEndIdx + 1);
 }
 
 function normalizeEntryEndpoint(entry) {
