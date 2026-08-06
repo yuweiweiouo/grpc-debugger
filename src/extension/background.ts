@@ -8,6 +8,8 @@ const PROTOCOL_VERSION = '1.3';
 const RECORDS_KEY = 'protobufTsInspectorRecords';
 const MAX_RECORDS = 200;
 const OBJECT_GROUP = 'protobuf-ts-inspector';
+const PAUSE_INSPECTION_BUDGET_MS = 350;
+const INSPECTION_COMMAND_TIMEOUT_MS = 200;
 
 const processingTargets = new Set();
 const endpointTypes = new Map();
@@ -130,11 +132,18 @@ async function isAttached(tabId) {
 async function handlePaused(source, params) {
   if (source.tabId == null) return;
   const targetKey = debuggerTargetKey(source);
-  if (processingTargets.has(targetKey)) return;
+  if (processingTargets.has(targetKey)) {
+    await resumeDebugger(source);
+    return;
+  }
   processingTargets.add(targetKey);
 
   try {
-    const located = await locateRpcMethod(source, params?.callFrames ?? []);
+    const located = await locateRpcMethod(
+      source,
+      params?.callFrames ?? [],
+      Date.now() + PAUSE_INSPECTION_BUDGET_MS,
+    );
     if (!located) return;
 
     const captured = await captureRpcCall(source, located.methodObjectId, located.inputObjectId);
@@ -157,56 +166,52 @@ async function handlePaused(source, params) {
       ...captured,
     });
   } catch (error) {
-    await addRecord({
-      id: crypto.randomUUID(),
-      tabId: source.tabId,
-      timestamp: new Date().toISOString(),
-      status: 'finished',
-      inspectorError: error instanceof Error ? error.message : String(error),
-    });
+    // Non-protobuf requests and navigation can invalidate a paused scope.
+    // Never surface these internal inspection failures as blank RPC records.
+    console.warn('Skipping paused request inspection:', error);
   } finally {
-    try {
-      await send(source, 'Debugger.resume');
-    } catch {
-      // A navigation or detach can invalidate the paused target.
-    }
+    await resumeDebugger(source);
     processingTargets.delete(targetKey);
   }
 }
 
-async function locateRpcMethod(source, callFrames) {
+async function locateRpcMethod(source, callFrames, deadline) {
   for (const frame of callFrames) {
-    const candidates = await getScopeCandidates(source, frame);
+    if (Date.now() >= deadline) return;
+    const candidates = await getScopeCandidates(source, frame, deadline);
     for (const candidate of candidates) {
+      if (Date.now() >= deadline) return;
       if (!candidate.objectId || !(await isRpcMethodObject(source, candidate.objectId))) continue;
-      const input = await findInputObject(source, candidate.objectId, candidates);
+      const input = await findInputObject(source, candidate.objectId, candidates, deadline);
       return { methodObjectId: candidate.objectId, inputObjectId: input?.objectId };
     }
   }
 }
 
-async function getScopeCandidates(source, frame) {
+async function getScopeCandidates(source, frame, deadline) {
   const candidates = [];
   const allowedScopes = new Set(['local', 'closure', 'block', 'catch']);
   for (const scope of frame.scopeChain ?? []) {
+    if (Date.now() >= deadline) return candidates;
     if (!allowedScopes.has(scope.type) || !scope.object?.objectId) continue;
-    const properties = await send(source, 'Runtime.getProperties', {
+    const properties = await sendInspectionCommand(source, 'Runtime.getProperties', {
       objectId: scope.object.objectId,
       ownProperties: true,
       accessorPropertiesOnly: false,
     });
     for (const property of properties?.result ?? []) {
+      if (Date.now() >= deadline) return candidates;
       const value = property.value;
       if (!value?.objectId || value.subtype === 'null') continue;
       candidates.push({ name: property.name, objectId: value.objectId, subtype: value.subtype });
-      if (candidates.length >= 120) return candidates;
+      if (candidates.length >= 80) return candidates;
     }
   }
   return candidates;
 }
 
 async function isRpcMethodObject(source, objectId) {
-  const result = await send(source, 'Runtime.callFunctionOn', {
+  const result = await sendInspectionCommand(source, 'Runtime.callFunctionOn', {
     objectId,
     functionDeclaration: `function () {
       return Boolean(this && typeof this === 'object' && typeof this.name === 'string' &&
@@ -222,13 +227,14 @@ async function isRpcMethodObject(source, objectId) {
   return result?.result?.value === true;
 }
 
-async function findInputObject(source, methodObjectId, candidates) {
+async function findInputObject(source, methodObjectId, candidates, deadline) {
   const preferredNames = /^(input|request|req|message|payload)$/i;
   const sorted = [...candidates].sort((a, b) => Number(preferredNames.test(b.name)) - Number(preferredNames.test(a.name)));
   for (const candidate of sorted) {
+    if (Date.now() >= deadline) return;
     if (!candidate.objectId || candidate.objectId === methodObjectId) continue;
     if (['arraybuffer', 'typedarray', 'dataview', 'promise'].includes(candidate.subtype)) continue;
-    const result = await send(source, 'Runtime.callFunctionOn', {
+    const result = await sendInspectionCommand(source, 'Runtime.callFunctionOn', {
       objectId: methodObjectId,
       functionDeclaration: 'function (value) { try { return typeof this.I?.is === "function" && this.I.is(value, 20); } catch { return false; } }',
       arguments: [{ objectId: candidate.objectId }],
@@ -240,7 +246,7 @@ async function findInputObject(source, methodObjectId, candidates) {
 }
 
 async function captureRpcCall(source, methodObjectId, inputObjectId) {
-  const result = await send(source, 'Runtime.callFunctionOn', {
+  const result = await sendInspectionCommand(source, 'Runtime.callFunctionOn', {
     objectId: methodObjectId,
     functionDeclaration: captureRpcInPage.toString(),
     arguments: [inputObjectId ? { objectId: inputObjectId } : { value: null }],
@@ -252,7 +258,7 @@ async function captureRpcCall(source, methodObjectId, inputObjectId) {
 }
 
 async function getMethodTypeHandles(source, methodObjectId) {
-  const [input, output] = await Promise.all(['I', 'O'].map((property) => send(source, 'Runtime.callFunctionOn', {
+  const [input, output] = await Promise.all(['I', 'O'].map((property) => sendInspectionCommand(source, 'Runtime.callFunctionOn', {
     objectId: methodObjectId,
     functionDeclaration: `function () { return this.${property}; }`,
     returnByValue: false,
@@ -460,3 +466,30 @@ function debuggerTargetKey(source) { return `${source.tabId}:${source.sessionId 
 function networkRequestKey(source, requestId) { return `${debuggerTargetKey(source)}:${requestId}`; }
 function configStorageKey(tabId) { return `protobufTsInspectorConfig:${tabId}`; }
 function send(target, method, params) { return chrome.debugger.sendCommand(target, method, params); }
+
+async function resumeDebugger(source) {
+  try {
+    await send(source, 'Debugger.resume');
+  } catch {
+    // A navigation or detach can invalidate the paused target.
+  }
+}
+
+function sendInspectionCommand(target, method, params) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`Timed out while inspecting ${method}`));
+    }, INSPECTION_COMMAND_TIMEOUT_MS);
+
+    send(target, method, params).then(
+      (result) => {
+        clearTimeout(timer);
+        resolve(result);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
