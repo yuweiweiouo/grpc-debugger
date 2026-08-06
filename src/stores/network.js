@@ -156,8 +156,8 @@ export function clearLogs(force = false) {
  * 將背景服務透過 chrome.debugger 擷取的 protobuf-ts 紀錄轉成既有 UI 的資料形狀。
  * 這些紀錄已在頁面 runtime 解碼，絕不可再套用 HAR/Reflection 解碼流程。
  */
-export function replaceInspectorLogs(records) {
-  const hiddenByService = new Map(get(services).map((service) => [service.fullName, service.hidden]));
+export function replaceInspectorLogs(records, hiddenServices = []) {
+  const hiddenServiceNames = new Set(hiddenServices);
   const entries = [...records].sort((a, b) => {
     return new Date(a.timestamp || 0).getTime() - new Date(b.timestamp || 0).getTime();
   }).map((record) => {
@@ -183,7 +183,16 @@ export function replaceInspectorLogs(records) {
       fullName: service.typeName,
       name: service.typeName.split('.').pop(),
       methods: service.methods || [],
-      hidden: hiddenByService.get(service.typeName) || false,
+      hidden: hiddenServiceNames.has(service.typeName),
+    });
+  }
+  for (const fullName of hiddenServiceNames) {
+    if (capturedServices.has(fullName)) continue;
+    capturedServices.set(fullName, {
+      fullName,
+      name: fullName.split('.').pop(),
+      methods: [],
+      hidden: true,
     });
   }
   services.set([...capturedServices.values()]);

@@ -59,10 +59,15 @@ async function handleMessage(message) {
       await stopInspecting(message.tabId);
       return {};
     case 'status':
+      {
+        const config = (await chrome.storage.local.get(configStorageKey(message.tabId)))[configStorageKey(message.tabId)];
+        const hiddenServices = (await chrome.storage.local.get(hiddenServicesStorageKey(message.tabId)))[hiddenServicesStorageKey(message.tabId)] ?? [];
       return {
         attached: await isAttached(message.tabId),
-        urlFilter: (await chrome.storage.local.get(configStorageKey(message.tabId)))[configStorageKey(message.tabId)]?.urlFilter ?? '',
+        urlFilter: config?.urlFilter ?? '',
+        hiddenServices,
       };
+      }
     case 'records':
       return { records: await getRecords(message.tabId) };
     case 'setHiddenServices':
@@ -160,7 +165,7 @@ async function handlePaused(source, params) {
     let located;
     let captured;
 
-    if (cache) {
+    if (cache && (!cache.adapter || cache.adapter === 'protobuf-ts')) {
       try {
         located = await locateCachedRpcInput(source, callFrames, cache, deadline);
         if (located) {
@@ -173,23 +178,41 @@ async function handlePaused(source, params) {
         rpcMethodCache.delete(endpointKey(source, endpoint));
         cache = null;
       }
+    } else if (cache?.adapter === 'grpc-web') {
+      try {
+        located = await locateCachedGrpcWebInput(source, callFrames, cache, deadline);
+        if (located) {
+          captured = await captureGrpcWebCall(source, cache.methodObjectId, located.inputObjectId);
+        }
+      } catch {
+        rpcMethodCache.delete(endpointKey(source, endpoint));
+        cache = null;
+      }
     }
 
     if (!captured) {
       located = await locateRpcMethod(source, callFrames, deadline);
       if (!located) return;
-      captured = await captureRpcCall(source, located.methodObjectId, located.inputObjectId);
+      captured = located.adapter === 'grpc-web'
+        ? await captureGrpcWebCall(source, located.methodObjectId, located.inputObjectId)
+        : await captureRpcCall(source, located.methodObjectId, located.inputObjectId);
       if (!captured) return;
 
-      endpoint = `/${captured.service.typeName}/${captured.method.name}`;
+      endpoint = captured.endpoint || `/${captured.service.typeName}/${captured.method.name}`;
       const cacheKey = endpointKey(source, endpoint);
-      const { request, ...metadata } = captured;
-      rpcMethodCache.set(cacheKey, {
-        methodObjectId: located.methodObjectId,
-        inputName: located.inputName,
-        metadata,
-      });
-      endpointTypes.set(cacheKey, await getMethodTypeHandles(source, located.methodObjectId));
+      if (located.adapter === 'grpc-web') {
+        rpcMethodCache.set(cacheKey, { adapter: 'grpc-web', methodObjectId: located.methodObjectId });
+        endpointTypes.set(cacheKey, { adapter: 'grpc-web', methodDescriptorId: located.methodObjectId });
+      } else {
+        const { request, ...metadata } = captured;
+        rpcMethodCache.set(cacheKey, {
+          adapter: 'protobuf-ts',
+          methodObjectId: located.methodObjectId,
+          inputName: located.inputName,
+          metadata,
+        });
+        endpointTypes.set(cacheKey, await getMethodTypeHandles(source, located.methodObjectId));
+      }
     }
 
     if (!endpoint) return;
@@ -225,8 +248,31 @@ async function locateRpcMethod(source, callFrames, deadline) {
       if (Date.now() >= deadline) return;
       if (!candidate.objectId || !(await isRpcMethodObject(source, candidate.objectId))) continue;
       const input = await findInputObject(source, candidate.objectId, candidates, deadline);
-      return { methodObjectId: candidate.objectId, inputObjectId: input?.objectId, inputName: input?.name };
+      return { adapter: 'protobuf-ts', methodObjectId: candidate.objectId, inputObjectId: input?.objectId, inputName: input?.name };
     }
+  }
+  return locateGrpcWebMethod(source, callFrames, deadline);
+}
+
+async function locateGrpcWebMethod(source, callFrames, deadline) {
+  for (const frame of callFrames) {
+    if (Date.now() >= deadline) return;
+    const candidates = await getScopeCandidates(source, frame, deadline);
+    for (const candidate of candidates) {
+      if (Date.now() >= deadline) return;
+      if (!candidate.objectId || !(await isGrpcWebDescriptor(source, candidate.objectId))) continue;
+      const input = await findGrpcWebInput(source, candidates, deadline);
+      return { adapter: 'grpc-web', methodObjectId: candidate.objectId, inputObjectId: input?.objectId };
+    }
+  }
+}
+
+async function locateCachedGrpcWebInput(source, callFrames, cache, deadline) {
+  for (const frame of callFrames) {
+    if (Date.now() >= deadline) return;
+    const candidates = await getScopeCandidates(source, frame, deadline);
+    const input = await findGrpcWebInput(source, candidates, deadline);
+    if (input) return { adapter: 'grpc-web', methodObjectId: cache.methodObjectId, inputObjectId: input.objectId };
   }
 }
 
@@ -282,6 +328,36 @@ async function isRpcMethodObject(source, objectId) {
   return result?.result?.value === true;
 }
 
+async function isGrpcWebDescriptor(source, objectId) {
+  const result = await sendInspectionCommand(source, 'Runtime.callFunctionOn', {
+    objectId,
+    functionDeclaration: `function () {
+      try {
+        return Boolean(typeof this?.getName === 'function' &&
+          typeof this.getName() === 'string' && this.getName().startsWith('/') &&
+          typeof this.a === 'function' && typeof this.b === 'function');
+      } catch { return false; }
+    }`,
+    returnByValue: true,
+    silent: true,
+  });
+  return result?.result?.value === true;
+}
+
+async function findGrpcWebInput(source, candidates, deadline) {
+  for (const candidate of candidates) {
+    if (Date.now() >= deadline) return;
+    if (!candidate.objectId || ['arraybuffer', 'typedarray', 'dataview', 'promise'].includes(candidate.subtype)) continue;
+    const result = await sendInspectionCommand(source, 'Runtime.callFunctionOn', {
+      objectId: candidate.objectId,
+      functionDeclaration: 'function () { return typeof this.serializeBinary === "function" && typeof this.toObject === "function"; }',
+      returnByValue: true,
+      silent: true,
+    });
+    if (result?.result?.value === true) return candidate;
+  }
+}
+
 async function findInputObject(source, methodObjectId, candidates, deadline, preferredInputName) {
   const preferredNames = /^(input|request|req|message|payload)$/i;
   const sorted = [...candidates].sort((a, b) => {
@@ -312,6 +388,32 @@ async function captureRpcCall(source, methodObjectId, inputObjectId) {
     silent: true,
   });
   if (result?.exceptionDetails) throw new Error(result.exceptionDetails.text || '無法讀取 protobuf-ts RPC');
+  return result?.result?.value;
+}
+
+async function captureGrpcWebCall(source, methodDescriptorId, inputObjectId) {
+  const result = await sendInspectionCommand(source, 'Runtime.callFunctionOn', {
+    objectId: methodDescriptorId,
+    functionDeclaration: `function (input) {
+      const endpoint = this.getName();
+      const parts = endpoint.split('/').filter(Boolean);
+      const serviceName = parts.at(-2) || 'unknown';
+      const methodName = parts.at(-1) || 'unknown';
+      return {
+        endpoint,
+        service: { typeName: serviceName, methods: [{ name: methodName, inputType: 'google-protobuf', outputType: 'google-protobuf' }] },
+        method: { name: methodName, localName: methodName, clientStreaming: false, serverStreaming: false },
+        requestType: 'google-protobuf',
+        responseType: 'google-protobuf',
+        request: input == null ? null : input.toObject(),
+        schema: { messages: {}, enums: {} },
+      };
+    }`,
+    arguments: [inputObjectId ? { objectId: inputObjectId } : { value: null }],
+    returnByValue: true,
+    silent: true,
+  });
+  if (result?.exceptionDetails) throw new Error(result.exceptionDetails.text || '無法讀取 grpc-web RPC');
   return result?.result?.value;
 }
 
@@ -374,12 +476,13 @@ async function handleLoadingFinished(source, params) {
     const raw = decodeCdpBody(body?.body ?? '', Boolean(body?.base64Encoded));
     const bytes = request.contentType?.includes('grpc-web-text') ? decodeBase64StreamBytes(new TextDecoder().decode(raw)) : raw;
     const typeInfo = endpointTypes.get(endpointKey(source, request.endpoint));
-    if (!typeInfo?.outputTypeId) throw new Error('找不到回應型別，請重新觸發此 RPC。');
+    if (!typeInfo?.outputTypeId && !typeInfo?.methodDescriptorId) throw new Error('找不到回應型別，請重新觸發此 RPC。');
 
     const responses = [];
     for (const frame of parseGrpcWebFrames(bytes)) {
       if (frame.isTrailer) continue;
       if (frame.compressed) responses.push({ _error: '尚不支援壓縮的 gRPC-Web frame。' });
+      else if (typeInfo.adapter === 'grpc-web') responses.push(await decodeGrpcWebResponse(source, typeInfo.methodDescriptorId, frame.data));
       else responses.push(await decodeMessageWithRuntime(source, typeInfo.outputTypeId, frame.data));
     }
     const patch = {
@@ -388,8 +491,9 @@ async function handleLoadingFinished(source, params) {
       responseReceivedAt: new Date().toISOString(),
       duration: Date.now() - request.startedAt,
     };
+    // Records are created exclusively at Debugger.paused. An unmatched Network
+    // response must never create a second, independently inferred RPC entry.
     if (request.callId) await patchRecord(request.callId, patch);
-    else await addRecord({ id: crypto.randomUUID(), tabId: source.tabId, timestamp: new Date().toISOString(), endpoint: request.endpoint, url: request.url, ...patch });
   } catch (error) {
     if (request.callId) await patchRecord(request.callId, {
       status: 'finished',
@@ -425,6 +529,23 @@ async function decodeMessageWithRuntime(source, objectId, bytes) {
     silent: true,
   });
   if (result?.exceptionDetails) throw new Error(result.exceptionDetails.text || 'protobuf-ts 無法解碼回應');
+  return result?.result?.value;
+}
+
+async function decodeGrpcWebResponse(source, methodDescriptorId, bytes) {
+  const result = await send(source, 'Runtime.callFunctionOn', {
+    objectId: methodDescriptorId,
+    functionDeclaration: `function (base64) {
+      const binary = atob(base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+      return this.b(bytes).toObject();
+    }`,
+    arguments: [{ value: bytesToBase64(bytes) }],
+    returnByValue: true,
+    silent: true,
+  });
+  if (result?.exceptionDetails) throw new Error(result.exceptionDetails.text || 'grpc-web 無法解碼回應');
   return result?.result?.value;
 }
 

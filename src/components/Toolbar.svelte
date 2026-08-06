@@ -15,22 +15,10 @@
     urlFilter,
   } from "../stores/inspector";
   import { t } from "../lib/i18n";
-  import { Play, RefreshCw, Search, Square, Trash2 } from "lucide-svelte";
-
-  let isReprocessing = false;
+  import { Play, Search, Square, Trash2 } from "lucide-svelte";
 
   async function handleClearLogs() {
     await clearInspectorRecords();
-  }
-
-  async function handleReprocess() {
-    if (isReprocessing) return;
-    isReprocessing = true;
-    try {
-      await refreshInspector();
-    } finally {
-      isReprocessing = false;
-    }
   }
 
   async function handleStart() {
@@ -50,14 +38,6 @@
     <button class="monitor-btn" class:stop={$monitoring} on:click={$monitoring ? handleStop : handleStart}>
       {#if $monitoring}<Square size={14} /> {$t("stop")}{:else}<Play size={14} /> {$t("start")}{/if}
     </button>
-    <button
-      class="icon-btn"
-      on:click={handleClearLogs}
-      title={$t("clear_logs")}
-      aria-label={$t("clear_logs")}
-    >
-      <Trash2 size={16} />
-    </button>
     <div class="search-container">
       <span class="search-icon"><Search size={14} /></span>
       <input
@@ -75,15 +55,14 @@
   <div class="right">
     <button
       class="icon-btn"
-      on:click={handleReprocess}
-      title={$t("reprocess_logs")}
-      aria-label={$t("reprocess_logs")}
-      disabled={isReprocessing}
-      class:spinning={isReprocessing}
+      on:click={handleClearLogs}
+      title={$t("clear_logs")}
+      aria-label={$t("clear_logs")}
     >
-      <RefreshCw size={16} />
+      <Trash2 size={16} />
     </button>
   </div>
+
   {#if $inspectorError}<span class="error-message">{$inspectorError}</span>{/if}
 </div>
 
@@ -181,14 +160,12 @@
     color: var(--color-text-primary);
   }
 
-
   .right {
     display: flex;
-    flex-direction: row;
     align-items: center;
-    gap: 4px;
     flex: 0 0 auto;
   }
+
 
   .error-message {
     flex: 1 0 100%;
@@ -206,21 +183,4 @@
     .search-container { flex-basis: 110px; }
   }
 
-  .icon-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .icon-btn.spinning :global(svg) {
-    animation: spin 1s linear infinite;
-  }
-
-  @keyframes spin {
-    from {
-      transform: rotate(0deg);
-    }
-    to {
-      transform: rotate(360deg);
-    }
-  }
 </style>

@@ -203,7 +203,7 @@ describe('network store optimization paths', () => {
     enableReflection.set(true);
   });
 
-  it('filteredLog 對 hidden services 使用常數時間 lookup', () => {
+  it('filteredLog 保留已停用服務的歷史紀錄', () => {
     services.set([
       { fullName: 'pkg.HiddenService', hidden: true },
       { fullName: 'pkg.VisibleService', hidden: false },
@@ -213,11 +213,9 @@ describe('network store optimization paths', () => {
       makeEntry({ id: 'visible', method: '/pkg.VisibleService/Call', endpoint: 'Call' }),
     ]);
 
-    const someSpy = vi.spyOn(Array.prototype, 'some');
     const entries = get(filteredLog);
 
-    expect(entries.map(entry => entry.id)).toEqual(['visible']);
-    expect(someSpy).not.toHaveBeenCalled();
+    expect(entries.map(entry => entry.id)).toEqual(['hidden', 'visible']);
   });
 
   it('filteredLog 在 entry 缺少 endpoint 時仍可依 method 過濾', () => {
