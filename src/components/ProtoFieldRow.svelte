@@ -5,10 +5,9 @@
    * 以表格行 (tr) 形式顯示單個 Protobuf 欄位的定義，
    * 包含編號 (tag)、名稱以及類型名稱。
    */
-  import { protoEngine } from "../lib/proto-engine";
-
   export let field;
   export let level = 0;
+  export let schema = null;
 
   let expanded = false;
 
@@ -19,8 +18,8 @@
     (field.type_name && field.type_name.includes("."));
 
   $: nestedMsg =
-    isMessage && field.type_name
-      ? protoEngine.findMessage(field.type_name)
+    isMessage && (field.type_name || field.typeName)
+      ? schema?.messages?.[field.type_name || field.typeName] || null
       : null;
 
   function toggle() {
@@ -30,8 +29,8 @@
   }
 
   function getTypeDisplay(f) {
-    if (f.type_name) {
-      return f.type_name;
+    if (f.type_name || f.typeName) {
+      return f.type_name || f.typeName;
     }
 
     // Double-Shield: 優先判定 Buf v2 的 kind 屬性
@@ -81,7 +80,7 @@
 </script>
 
 <tr class="proto-row" class:nested={level > 0}>
-  <td class="col-num">{field.number}</td>
+  <td class="col-num">{field.number ?? field.no}</td>
   <td class="col-name" style="padding-left: {12 + level * 20}px">
     {field.name}
   </td>
@@ -99,7 +98,7 @@
 
 {#if expanded && nestedMsg}
   {#each nestedMsg.fields || [] as subField}
-    <svelte:self field={subField} level={level + 1} />
+      <svelte:self field={subField} {schema} level={level + 1} />
   {/each}
 {/if}
 

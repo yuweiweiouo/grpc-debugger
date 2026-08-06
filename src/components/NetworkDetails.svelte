@@ -9,7 +9,6 @@
    * 4. 支援將解碼後的資歷導出為 JSON 文字。
    */
   import { selectedEntry } from "../stores/network";
-  import { protoEngine } from "../lib/proto-engine";
   import { t } from "../lib/i18n";
   import { normalizeActiveTab } from "../lib/network-details-tabs";
   import { combinedView } from "../stores/settings";
@@ -76,13 +75,11 @@
 
   // 反應式數據流：當 Store 中的 selectedEntry 改變時，自動重新計算相應的 Proto 定義與訊息結構
   $: entry = $selectedEntry;
-  $: protoDef = entry ? protoEngine.findMethod(entry.method, entry.url) : null;
-  $: requestMsg = protoDef
-    ? protoEngine.findMessage(protoDef.requestType)
+  $: protoDef = entry?.schema
+    ? { requestType: entry.requestType, responseType: entry.responseType }
     : null;
-  $: responseMsg = protoDef
-    ? protoEngine.findMessage(protoDef.responseType)
-    : null;
+  $: requestMsg = protoDef ? entry.schema.messages?.[protoDef.requestType] : null;
+  $: responseMsg = protoDef ? entry.schema.messages?.[protoDef.responseType] : null;
 
   function setTab(tab) {
     activeTab = tab;
@@ -169,57 +166,6 @@
     e.target.select();
   }
 
-  async function handleReplay() {
-    if (!entry?.url) {
-      replayStatus = $t('replay_no_data');
-      setTimeout(() => { replayStatus = ''; }, 2000);
-      return;
-    }
-
-    replayStatus = $t('replaying');
-
-    const headers = entry.requestHeaders || {};
-    const body = entry.requestRaw || null;
-    const isBase64 = entry.requestBase64Encoded;
-
-    const replayScript = `
-      (async function() {
-        try {
-          const headers = ${JSON.stringify(headers)};
-          ${isBase64 && body
-            ? `const raw = atob(${JSON.stringify(body)});
-               const bytes = new Uint8Array(raw.length);
-               for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
-               var bodyData = bytes.buffer;`
-            : body
-              ? `var bodyData = ${JSON.stringify(body)};`
-              : `var bodyData = null;`}
-          const resp = await fetch(${JSON.stringify(entry.url)}, {
-            method: 'POST',
-            headers,
-            body: bodyData,
-          });
-          return 'OK:' + resp.status;
-        } catch(e) {
-          return 'ERR:' + e.message;
-        }
-      })()
-    `;
-
-    if (typeof chrome !== 'undefined' && chrome.devtools?.inspectedWindow) {
-      chrome.devtools.inspectedWindow.eval(replayScript, (result, isException) => {
-        if (isException || !result || result.startsWith('ERR:')) {
-          replayStatus = $t('replay_failed');
-        } else {
-          replayStatus = $t('replay_success');
-        }
-        setTimeout(() => { replayStatus = ''; }, 2000);
-      });
-    } else {
-      replayStatus = $t('replay_failed');
-      setTimeout(() => { replayStatus = ''; }, 2000);
-    }
-  }
 </script>
 
 <div class="network-details">
@@ -288,13 +234,13 @@
             <p>Waiting for response from server...</p>
           </div>
         {:else}
-          {#if entry.url}
+          {#if entry.service?.typeName}
             <section>
-              <div class="replay-row">
-                <button class="replay-btn" on:click={handleReplay}>
-                  ▶ {$t('replay')}
-                </button>
-              </div>
+              <h3>protobuf-ts Runtime</h3>
+              <div class="field"><span class="label">Service:</span><span class="val">{entry.service.typeName}</span></div>
+              <div class="field"><span class="label">Request type:</span><span class="val">{entry.requestType}</span></div>
+              <div class="field"><span class="label">Response type:</span><span class="val">{entry.responseType}</span></div>
+              {#if entry.responseError}<div class="field"><span class="label">Decode error:</span><span class="val">{entry.responseError}</span></div>{/if}
             </section>
           {/if}
           {#if entry.requestHeaders}
@@ -425,7 +371,7 @@
                 >
                 <tbody>
                   {#each requestMsg?.fields || [] as f}
-                    <ProtoFieldRow field={f} />
+                    <ProtoFieldRow field={f} schema={entry.schema} />
                   {/each}
                 </tbody>
               </table>
@@ -439,7 +385,7 @@
                 >
                 <tbody>
                   {#each responseMsg?.fields || [] as f}
-                    <ProtoFieldRow field={f} />
+                    <ProtoFieldRow field={f} schema={entry.schema} />
                   {/each}
                 </tbody>
               </table>
@@ -702,28 +648,6 @@
   .copy-btn:hover {
     background: var(--color-bg-hover);
     border-color: var(--color-text-tertiary);
-  }
-
-  .replay-row {
-    display: flex;
-    gap: 8px;
-  }
-
-  .replay-btn {
-    background: var(--color-bg-secondary);
-    border: 1px solid var(--color-border);
-    border-radius: 6px;
-    padding: 6px 14px;
-    font-size: 12px;
-    color: var(--color-primary);
-    cursor: pointer;
-    font-weight: 500;
-    transition: all 0.15s;
-  }
-
-  .replay-btn:hover {
-    background: var(--color-primary-bg);
-    border-color: var(--color-primary);
   }
 
   .no-data {

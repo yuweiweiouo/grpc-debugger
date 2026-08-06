@@ -1,1 +1,0 @@
-(()=>{var e=_=>async n=>await _(n);window.__CONNECT_WEB_DEVTOOLS__=e;window.__CONNECT_WEB_DEVTOOLS__.registerType=function(_,n){window.__CONNECT_WEB_DEVTOOLS__._types=window.__CONNECT_WEB_DEVTOOLS__._types||{},window.__CONNECT_WEB_DEVTOOLS__._types[_]=n};var t=new CustomEvent("connect-web-dev-tools-ready");window.dispatchEvent(t);})();

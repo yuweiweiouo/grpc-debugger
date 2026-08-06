@@ -9,11 +9,6 @@ function extensionScripts() {
       const { build } = await import('esbuild');
       const scripts = [
         'background',
-        'content-script',
-        'devtools',
-        'fetch-interceptor',
-        'grpc-web-injector',
-        'connect-web-interceptor',
       ];
       for (const name of scripts) {
         await build({

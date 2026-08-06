@@ -172,6 +172,44 @@ export function clearLogs(force = false) {
 }
 
 /**
+ * 將背景服務透過 chrome.debugger 擷取的 protobuf-ts 紀錄轉成既有 UI 的資料形狀。
+ * 這些紀錄已在頁面 runtime 解碼，絕不可再套用 HAR/Reflection 解碼流程。
+ */
+export function replaceInspectorLogs(records) {
+  const hiddenByService = new Map(get(services).map((service) => [service.fullName, service.hidden]));
+  const entries = records.map((record) => {
+    const methodPath = record.endpoint || (record.service?.typeName && record.method?.name
+      ? `/${record.service.typeName}/${record.method.name}`
+      : '');
+    return {
+      ...record,
+      method: methodPath,
+      endpoint: record.method?.name || methodPath.split('/').pop() || '',
+      startTime: record.timestamp,
+      grpcStatus: record.responseError || record.inspectorError ? 2 : 0,
+      _source: 'protobuf-ts',
+    };
+  });
+
+  log.set(entries);
+  const capturedServices = new Map();
+  for (const entry of entries) {
+    const service = entry.service;
+    if (!service?.typeName) continue;
+    capturedServices.set(service.typeName, {
+      fullName: service.typeName,
+      name: service.typeName.split('.').pop(),
+      methods: service.methods || [],
+      hidden: hiddenByService.get(service.typeName) || false,
+    });
+  }
+  services.set([...capturedServices.values()]);
+
+  const selected = get(selectedId);
+  if (selected && !entries.some((entry) => entry.id === selected)) selectedId.set(null);
+}
+
+/**
  * 核心處理：將 entry 中的 Raw 資料轉換為可讀物件
  */
 async function processEntry(entry, forceReprocess = false) {

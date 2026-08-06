@@ -4,30 +4,42 @@
    *
    * 提供網路日誌的過濾、清除、以及持久化設定（Preserve Log）。
    */
+  import { filterValue } from "../stores/network";
   import {
-    filterValue,
-    clearLogs,
-    reprocessAllLogs,
-    preserveLog,
-  } from "../stores/network";
-  import { enablePostMessage, enableReflection } from "../stores/settings";
+    clearInspectorRecords,
+    inspectorError,
+    monitoring,
+    refreshInspector,
+    startInspector,
+    stopInspector,
+    urlFilter,
+  } from "../stores/inspector";
   import { t } from "../lib/i18n";
-  import { Trash2, Search, RefreshCw } from "lucide-svelte";
+  import { Play, RefreshCw, Search, Square, Trash2 } from "lucide-svelte";
 
   let isReprocessing = false;
 
-  function handleClearLogs() {
-    clearLogs(true);
+  async function handleClearLogs() {
+    await clearInspectorRecords();
   }
 
   async function handleReprocess() {
     if (isReprocessing) return;
     isReprocessing = true;
     try {
-      await reprocessAllLogs();
+      await refreshInspector();
     } finally {
       isReprocessing = false;
     }
+  }
+
+  async function handleStart() {
+    await startInspector();
+    await refreshInspector();
+  }
+
+  async function handleStop() {
+    await stopInspector();
   }
 </script>
 
@@ -49,19 +61,10 @@
         bind:value={$filterValue}
       />
     </div>
-    <label class="preserve-checkbox">
-      <input type="checkbox" bind:checked={$preserveLog} />
-      <span>{$t("preserve_log")}</span>
-    </label>
-    <span class="separator">|</span>
-    <label class="preserve-checkbox">
-      <input type="checkbox" bind:checked={$enablePostMessage} />
-      <span>{$t("source_postmessage")}</span>
-    </label>
-    <label class="preserve-checkbox">
-      <input type="checkbox" bind:checked={$enableReflection} />
-      <span>{$t("source_reflection")}</span>
-    </label>
+    <input class="url-filter" type="text" placeholder="XHR/fetch URL 篩選，例如 /Service/" bind:value={$urlFilter} />
+    <button class="monitor-btn" class:stop={$monitoring} on:click={$monitoring ? handleStop : handleStart}>
+      {#if $monitoring}<Square size={14} /> 停止監看{:else}<Play size={14} /> 開始監看{/if}
+    </button>
   </div>
 
   <div class="right">
@@ -76,6 +79,7 @@
       <RefreshCw size={16} />
     </button>
   </div>
+  {#if $inspectorError}<span class="error-message">{$inspectorError}</span>{/if}
 </div>
 
 <style>
@@ -83,6 +87,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
+    position: relative;
     padding: 8px 12px;
     height: 48px;
     box-sizing: border-box;
@@ -93,30 +98,6 @@
     display: flex;
     align-items: center;
     gap: 10px;
-  }
-
-  .separator {
-    color: var(--color-border);
-    font-size: 12px;
-    user-select: none;
-  }
-
-  .preserve-checkbox {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    font-size: 12px;
-    color: var(--color-text-secondary);
-    cursor: pointer;
-    user-select: none;
-  }
-
-  .preserve-checkbox input {
-    cursor: pointer;
-  }
-
-  .preserve-checkbox span {
-    white-space: nowrap;
   }
 
   .search-container {
@@ -144,6 +125,31 @@
     color: var(--color-text-primary);
   }
 
+  .url-filter {
+    width: min(300px, 32vw);
+    padding: 6px 8px;
+    border: 1px solid var(--color-border);
+    border-radius: 6px;
+    background: var(--color-bg-primary);
+    font-size: 12px;
+  }
+
+  .monitor-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 6px 9px;
+    border: 0;
+    border-radius: 6px;
+    background: var(--color-primary);
+    color: white;
+    font-size: 12px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .monitor-btn.stop { background: var(--color-error); }
+
   .icon-btn {
     background: transparent;
     border: none;
@@ -167,6 +173,19 @@
     flex-direction: row;
     align-items: center;
     gap: 4px;
+  }
+
+  .error-message {
+    position: absolute;
+    right: 12px;
+    top: 50px;
+    z-index: 20;
+    max-width: 50%;
+    padding: 6px 8px;
+    border-radius: 6px;
+    background: var(--color-error-bg);
+    color: var(--color-error);
+    font-size: 11px;
   }
 
   .icon-btn:disabled {

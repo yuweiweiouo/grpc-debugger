@@ -12,70 +12,44 @@
   import NetworkDetails from "./components/NetworkDetails.svelte";
   import ServicesView from "./components/ServicesView.svelte";
   import SettingsView from "./components/SettingsView.svelte";
-  import { addLog, clearLogs } from "./stores/network";
-  import { registerSchema } from "./stores/schema";
+  import { refreshInspector } from "./stores/inspector";
   import { activePage } from "./stores/ui";
   import { listPaneWidth } from "./stores/layout";
   import { theme } from "./stores/settings";
-  let tabId;
-  let runtimeMessageListener;
+  let storageListener;
+  let tabListener;
 
   onMount(() => {
     applyTheme($theme);
     const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
     mediaQuery.addEventListener('change', onSystemThemeChange);
 
-    if (typeof chrome !== "undefined" && chrome.devtools) {
-      try {
-        tabId = chrome.devtools.inspectedWindow.tabId;
-
-        window.dispatchGrpcEvent = (data) => {
-          addLog(data);
-        };
-
-        // 監聽來自 background 的訊息（主要處理 registerSchema）
-        runtimeMessageListener = (message) => {
-          if (message._relayedBy === "background") return;
-
-          // Schema 註冊：從 grpc-web-injector 或其他來源
-          if (
-            message.type === "__GRPCWEB_DEVTOOLS__" &&
-            message.action === "registerSchema"
-          ) {
-            registerSchema(message.schema, message.source || "");
-          }
-        };
-        chrome.runtime.onMessage.addListener(runtimeMessageListener);
-
-        // 監聽頁面重新載入以清除日誌
-        if (chrome.tabs && chrome.tabs.onUpdated) {
-          chrome.tabs.onUpdated.addListener(onTabUpdated);
+    if (typeof chrome !== "undefined" && chrome.runtime) {
+      refreshInspector();
+      storageListener = (changes, areaName) => {
+        if (areaName !== "local") return;
+        if (changes.protobufTsInspectorRecords || Object.keys(changes).some((key) => key.startsWith("protobufTsInspectorConfig:"))) {
+          refreshInspector();
         }
-      } catch (error) {
-        console.warn("DevTools API not available:", error);
-      }
+      };
+      tabListener = () => refreshInspector();
+      chrome.storage.onChanged.addListener(storageListener);
+      chrome.tabs.onActivated.addListener(tabListener);
     }
   });
 
   onDestroy(() => {
     if (typeof window !== "undefined") {
-      delete window.dispatchGrpcEvent;
       const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
       mediaQuery.removeEventListener('change', onSystemThemeChange);
     }
-    if (typeof chrome !== "undefined" && chrome.tabs?.onUpdated) {
-      chrome.tabs.onUpdated.removeListener(onTabUpdated);
+    if (typeof chrome !== "undefined" && storageListener) {
+      chrome.storage?.onChanged?.removeListener(storageListener);
     }
-    if (typeof chrome !== "undefined" && runtimeMessageListener) {
-      chrome.runtime?.onMessage?.removeListener(runtimeMessageListener);
+    if (typeof chrome !== "undefined" && tabListener) {
+      chrome.tabs?.onActivated?.removeListener(tabListener);
     }
   });
-
-  function onTabUpdated(tId, { status }) {
-    if (tId === tabId && status === "loading") {
-      clearLogs();
-    }
-  }
 
   // --- Resizer Logic ---
   let isResizing = false;
