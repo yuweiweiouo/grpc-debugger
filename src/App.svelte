@@ -20,6 +20,7 @@
   let storageListener;
   let tabListener;
   let navigationListener;
+  let runtimeListener;
   let splitView;
 
   onMount(() => {
@@ -36,6 +37,9 @@
         }
       };
       tabListener = () => refreshInspector();
+      runtimeListener = (message) => {
+        if (message?.type === "inspectorRecordAdded") refreshInspector();
+      };
       navigationListener = ({ tabId, frameId }) => {
         if (frameId === 0 && !$preserveLog) {
           clearInspectorRecords(tabId);
@@ -44,6 +48,7 @@
       chrome.storage.onChanged.addListener(storageListener);
       chrome.tabs.onActivated.addListener(tabListener);
       chrome.webNavigation.onCommitted.addListener(navigationListener);
+      chrome.runtime.onMessage.addListener(runtimeListener);
     }
   });
 
@@ -60,6 +65,9 @@
     }
     if (typeof chrome !== "undefined" && navigationListener) {
       chrome.webNavigation?.onCommitted?.removeListener(navigationListener);
+    }
+    if (typeof chrome !== "undefined" && runtimeListener) {
+      chrome.runtime?.onMessage?.removeListener(runtimeListener);
     }
   });
 
