@@ -31,7 +31,7 @@ export async function refreshInspector() {
     ]);
     monitoring.set(Boolean(status.attached));
     urlFilter.set(status.urlFilter ?? '');
-    replaceInspectorLogs(records.records ?? []);
+    replaceInspectorLogs(records.records ?? [], status.hiddenServices ?? []);
     inspectorError.set('');
   } catch (error) {
     inspectorError.set(error instanceof Error ? error.message : String(error));
