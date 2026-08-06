@@ -13,6 +13,7 @@ const INSPECTION_COMMAND_TIMEOUT_MS = 200;
 
 const processingTargets = new Set();
 const endpointTypes = new Map();
+const rpcMethodCache = new Map();
 const pendingCalls = new Map();
 const networkRequests = new Map();
 let recordMutation = Promise.resolve();
@@ -73,6 +74,7 @@ async function handleMessage(message) {
 
 async function startInspecting(tabId, urlFilter) {
   if (!Number.isInteger(tabId)) throw new Error('無效的分頁 ID');
+  const normalizedFilter = urlFilter.trim();
   const target = { tabId };
   if (!(await isAttached(tabId))) await chrome.debugger.attach(target, PROTOCOL_VERSION);
 
@@ -84,17 +86,18 @@ async function startInspecting(tabId, urlFilter) {
 
   const configKey = configStorageKey(tabId);
   const previous = (await chrome.storage.local.get(configKey))[configKey];
-  if (previous?.urlFilter !== undefined && previous.urlFilter !== urlFilter) {
+  const previousBreakpoints = [previous?.urlFilter, ...(previous?.autoPaths ?? [])].filter((breakpoint) => breakpoint !== undefined);
+  for (const breakpoint of new Set(previousBreakpoints)) {
     try {
-      await send(target, 'DOMDebugger.removeXHRBreakpoint', { url: previous.urlFilter });
+      await send(target, 'DOMDebugger.removeXHRBreakpoint', { url: breakpoint });
     } catch {
       // Navigation may have already discarded the old breakpoint.
     }
   }
 
-  await send(target, 'DOMDebugger.setXHRBreakpoint', { url: urlFilter });
-  await chrome.storage.local.set({ [configKey]: { urlFilter, startedAt: new Date().toISOString() } });
-  return { attached: true, urlFilter };
+  await send(target, 'DOMDebugger.setXHRBreakpoint', { url: normalizedFilter });
+  await chrome.storage.local.set({ [configKey]: { urlFilter: normalizedFilter, startedAt: new Date().toISOString() } });
+  return { attached: true, urlFilter: normalizedFilter };
 }
 
 async function stopInspecting(tabId) {
@@ -109,9 +112,9 @@ async function stopInspecting(tabId) {
     } catch {
       // The inspected page can be gone before stop is clicked.
     }
-    if (config?.urlFilter !== undefined) {
+    for (const breakpoint of new Set([config?.urlFilter, ...(config?.autoPaths ?? [])].filter((breakpoint) => breakpoint !== undefined))) {
       try {
-        await send(target, 'DOMDebugger.removeXHRBreakpoint', { url: config.urlFilter });
+        await send(target, 'DOMDebugger.removeXHRBreakpoint', { url: breakpoint });
       } catch {
         // Detaching is sufficient when the breakpoint no longer exists.
       }
@@ -139,18 +142,46 @@ async function handlePaused(source, params) {
   processingTargets.add(targetKey);
 
   try {
-    const located = await locateRpcMethod(
-      source,
-      params?.callFrames ?? [],
-      Date.now() + PAUSE_INSPECTION_BUDGET_MS,
-    );
-    if (!located) return;
+    const callFrames = params?.callFrames ?? [];
+    const deadline = Date.now() + PAUSE_INSPECTION_BUDGET_MS;
+    let endpoint = findKnownEndpoint(source, params?.data?.url);
+    let cache = endpoint && rpcMethodCache.get(endpointKey(source, endpoint));
+    let located;
+    let captured;
 
-    const captured = await captureRpcCall(source, located.methodObjectId, located.inputObjectId);
-    if (!captured) return;
+    if (cache) {
+      try {
+        located = await locateCachedRpcInput(source, callFrames, cache, deadline);
+        if (located) {
+          captured = {
+            ...cache.metadata,
+            request: await captureCachedRpcRequest(source, cache.methodObjectId, located.inputObjectId),
+          };
+        }
+      } catch {
+        rpcMethodCache.delete(endpointKey(source, endpoint));
+        cache = null;
+      }
+    }
 
-    const endpoint = `/${captured.service.typeName}/${captured.method.name}`;
-    endpointTypes.set(endpointKey(source, endpoint), await getMethodTypeHandles(source, located.methodObjectId));
+    if (!captured) {
+      located = await locateRpcMethod(source, callFrames, deadline);
+      if (!located) return;
+      captured = await captureRpcCall(source, located.methodObjectId, located.inputObjectId);
+      if (!captured) return;
+
+      endpoint = `/${captured.service.typeName}/${captured.method.name}`;
+      const cacheKey = endpointKey(source, endpoint);
+      const { request, ...metadata } = captured;
+      rpcMethodCache.set(cacheKey, {
+        methodObjectId: located.methodObjectId,
+        inputName: located.inputName,
+        metadata,
+      });
+      endpointTypes.set(cacheKey, await getMethodTypeHandles(source, located.methodObjectId));
+    }
+
+    if (!endpoint) return;
     const queue = pendingCalls.get(endpointKey(source, endpoint)) ?? [];
     const callId = crypto.randomUUID();
     queue.push(callId);
@@ -183,12 +214,21 @@ async function locateRpcMethod(source, callFrames, deadline) {
       if (Date.now() >= deadline) return;
       if (!candidate.objectId || !(await isRpcMethodObject(source, candidate.objectId))) continue;
       const input = await findInputObject(source, candidate.objectId, candidates, deadline);
-      return { methodObjectId: candidate.objectId, inputObjectId: input?.objectId };
+      return { methodObjectId: candidate.objectId, inputObjectId: input?.objectId, inputName: input?.name };
     }
   }
 }
 
-async function getScopeCandidates(source, frame, deadline) {
+async function locateCachedRpcInput(source, callFrames, cache, deadline) {
+  for (const frame of callFrames) {
+    if (Date.now() >= deadline) return;
+    const candidates = await getScopeCandidates(source, frame, deadline, cache.inputName);
+    const input = await findInputObject(source, cache.methodObjectId, candidates, deadline, cache.inputName);
+    if (input) return { inputObjectId: input.objectId };
+  }
+}
+
+async function getScopeCandidates(source, frame, deadline, preferredInputName) {
   const candidates = [];
   const allowedScopes = new Set(['local', 'closure', 'block', 'catch']);
   for (const scope of frame.scopeChain ?? []) {
@@ -203,6 +243,10 @@ async function getScopeCandidates(source, frame, deadline) {
       if (Date.now() >= deadline) return candidates;
       const value = property.value;
       if (!value?.objectId || value.subtype === 'null') continue;
+      if (preferredInputName) {
+        if (property.name === preferredInputName) return [{ name: property.name, objectId: value.objectId, subtype: value.subtype }];
+        continue;
+      }
       candidates.push({ name: property.name, objectId: value.objectId, subtype: value.subtype });
       if (candidates.length >= 80) return candidates;
     }
@@ -227,9 +271,12 @@ async function isRpcMethodObject(source, objectId) {
   return result?.result?.value === true;
 }
 
-async function findInputObject(source, methodObjectId, candidates, deadline) {
+async function findInputObject(source, methodObjectId, candidates, deadline, preferredInputName) {
   const preferredNames = /^(input|request|req|message|payload)$/i;
-  const sorted = [...candidates].sort((a, b) => Number(preferredNames.test(b.name)) - Number(preferredNames.test(a.name)));
+  const sorted = [...candidates].sort((a, b) => {
+    return Number(b.name === preferredInputName) - Number(a.name === preferredInputName) ||
+      Number(preferredNames.test(b.name)) - Number(preferredNames.test(a.name));
+  });
   for (const candidate of sorted) {
     if (Date.now() >= deadline) return;
     if (!candidate.objectId || candidate.objectId === methodObjectId) continue;
@@ -254,6 +301,20 @@ async function captureRpcCall(source, methodObjectId, inputObjectId) {
     silent: true,
   });
   if (result?.exceptionDetails) throw new Error(result.exceptionDetails.text || '無法讀取 protobuf-ts RPC');
+  return result?.result?.value;
+}
+
+async function captureCachedRpcRequest(source, methodObjectId, inputObjectId) {
+  const result = await sendInspectionCommand(source, 'Runtime.callFunctionOn', {
+    objectId: methodObjectId,
+    functionDeclaration: `function (input) {
+      return input == null ? null : this.I.toJson(input, { emitDefaultValues: true });
+    }`,
+    arguments: [inputObjectId ? { objectId: inputObjectId } : { value: null }],
+    returnByValue: true,
+    silent: true,
+  });
+  if (result?.exceptionDetails) throw new Error(result.exceptionDetails.text || '無法讀取 protobuf-ts request');
   return result?.result?.value;
 }
 
@@ -458,6 +519,7 @@ function clearRecords(tabId) { return mutateRecords((records) => records.filter(
 function clearRuntimeStateForTab(tabId) {
   const prefix = `${tabId}:`;
   for (const key of endpointTypes.keys()) if (key.startsWith(prefix)) endpointTypes.delete(key);
+  for (const key of rpcMethodCache.keys()) if (key.startsWith(prefix)) rpcMethodCache.delete(key);
   for (const key of pendingCalls.keys()) if (key.startsWith(prefix)) pendingCalls.delete(key);
   for (const [key, request] of networkRequests) if (request.source.tabId === tabId) networkRequests.delete(key);
 }

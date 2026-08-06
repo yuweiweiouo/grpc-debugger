@@ -150,6 +150,7 @@
   }
 
   .monitor-btn.stop { background: var(--color-error); }
+  .monitor-btn:disabled { cursor: not-allowed; opacity: 0.5; }
 
   .preserve-checkbox {
     display: inline-flex;

@@ -1,6 +1,6 @@
 {
   "name": "gRPC Debugger",
-  "version": "2.0.3",
+  "version": "2.0.4",
   "manifest_version": 3,
   "description": "Inspect protobuf-ts gRPC-Web calls with the runtime metadata already present in the page.",
   "author": "魚尾尾",
@@ -16,7 +16,8 @@
     "activeTab",
     "debugger",
     "sidePanel",
-    "storage"
+    "storage",
+    "webNavigation"
   ],
   "action": {
     "default_title": "開啟 gRPC Debugger"
