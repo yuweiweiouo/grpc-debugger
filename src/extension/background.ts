@@ -445,7 +445,7 @@ function mutateRecords(mutator) {
   });
   return recordMutation;
 }
-function addRecord(record) { return mutateRecords((records) => [record, ...records].slice(0, MAX_RECORDS)); }
+function addRecord(record) { return mutateRecords((records) => [...records, record].slice(-MAX_RECORDS)); }
 function patchRecord(id, patch) { return mutateRecords((records) => records.map((record) => record.id === id ? { ...record, ...patch } : record)); }
 async function getRecords(tabId) { const stored = await chrome.storage.local.get(RECORDS_KEY); return (stored[RECORDS_KEY] ?? []).filter((record) => record.tabId === tabId); }
 function clearRecords(tabId) { return mutateRecords((records) => records.filter((record) => record.tabId !== tabId)); }

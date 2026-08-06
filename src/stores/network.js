@@ -177,7 +177,9 @@ export function clearLogs(force = false) {
  */
 export function replaceInspectorLogs(records) {
   const hiddenByService = new Map(get(services).map((service) => [service.fullName, service.hidden]));
-  const entries = records.map((record) => {
+  const entries = [...records].sort((a, b) => {
+    return new Date(a.timestamp || 0).getTime() - new Date(b.timestamp || 0).getTime();
+  }).map((record) => {
     const methodPath = record.endpoint || (record.service?.typeName && record.method?.name
       ? `/${record.service.typeName}/${record.method.name}`
       : '');
