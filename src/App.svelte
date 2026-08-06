@@ -21,6 +21,7 @@
   let tabListener;
   let navigationListener;
   let splitView;
+  const completedTabs = new Set();
 
   onMount(() => {
     applyTheme($theme);
@@ -29,15 +30,29 @@
 
     if (typeof chrome !== "undefined" && chrome.runtime) {
       refreshInspector();
+      chrome.tabs.query({ active: true, currentWindow: true }).then(([tab]) => {
+        if (tab?.status === "complete" && Number.isInteger(tab.id)) {
+          completedTabs.add(tab.id);
+        }
+      });
       storageListener = (changes, areaName) => {
         if (areaName !== "local") return;
         if (changes.protobufTsInspectorRecords || Object.keys(changes).some((key) => key.startsWith("protobufTsInspectorConfig:"))) {
           refreshInspector();
         }
       };
-      tabListener = () => refreshInspector();
+      tabListener = ({ tabId }) => {
+        refreshInspector();
+        chrome.tabs.get(tabId).then((tab) => {
+          if (tab?.status === "complete") completedTabs.add(tabId);
+        }).catch(() => {});
+      };
       navigationListener = (tabId, { status }) => {
-        if (status === "loading" && !$preserveLog) {
+        if (status === "complete") {
+          completedTabs.add(tabId);
+          return;
+        }
+        if (status === "loading" && completedTabs.delete(tabId) && !$preserveLog) {
           clearInspectorRecords(tabId);
         }
       };
