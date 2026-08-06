@@ -71,6 +71,15 @@ export async function clearInspectorRecords(tabId) {
   }
 }
 
+export async function setHiddenServices(serviceNames) {
+  try {
+    const tabId = await getCurrentTabId();
+    await send({ type: 'setHiddenServices', tabId, services: serviceNames });
+  } catch (error) {
+    inspectorError.set(error instanceof Error ? error.message : String(error));
+  }
+}
+
 function getStoreValue(store) {
   let value;
   const unsubscribe = store.subscribe((next) => { value = next; });
