@@ -16,7 +16,8 @@
     "activeTab",
     "debugger",
     "sidePanel",
-    "storage"
+    "storage",
+    "webNavigation"
   ],
   "action": {
     "default_title": "開啟 gRPC Debugger"

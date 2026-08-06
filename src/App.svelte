@@ -21,7 +21,6 @@
   let tabListener;
   let navigationListener;
   let splitView;
-  const completedTabs = new Set();
 
   onMount(() => {
     applyTheme($theme);
@@ -30,35 +29,21 @@
 
     if (typeof chrome !== "undefined" && chrome.runtime) {
       refreshInspector();
-      chrome.tabs.query({ active: true, currentWindow: true }).then(([tab]) => {
-        if (tab?.status === "complete" && Number.isInteger(tab.id)) {
-          completedTabs.add(tab.id);
-        }
-      });
       storageListener = (changes, areaName) => {
         if (areaName !== "local") return;
         if (changes.protobufTsInspectorRecords || Object.keys(changes).some((key) => key.startsWith("protobufTsInspectorConfig:"))) {
           refreshInspector();
         }
       };
-      tabListener = ({ tabId }) => {
-        refreshInspector();
-        chrome.tabs.get(tabId).then((tab) => {
-          if (tab?.status === "complete") completedTabs.add(tabId);
-        }).catch(() => {});
-      };
-      navigationListener = (tabId, { status }) => {
-        if (status === "complete") {
-          completedTabs.add(tabId);
-          return;
-        }
-        if (status === "loading" && completedTabs.delete(tabId) && !$preserveLog) {
+      tabListener = () => refreshInspector();
+      navigationListener = ({ tabId, frameId }) => {
+        if (frameId === 0 && !$preserveLog) {
           clearInspectorRecords(tabId);
         }
       };
       chrome.storage.onChanged.addListener(storageListener);
       chrome.tabs.onActivated.addListener(tabListener);
-      chrome.tabs.onUpdated.addListener(navigationListener);
+      chrome.webNavigation.onCommitted.addListener(navigationListener);
     }
   });
 
@@ -74,7 +59,7 @@
       chrome.tabs?.onActivated?.removeListener(tabListener);
     }
     if (typeof chrome !== "undefined" && navigationListener) {
-      chrome.tabs?.onUpdated?.removeListener(navigationListener);
+      chrome.webNavigation?.onCommitted?.removeListener(navigationListener);
     }
   });
 
