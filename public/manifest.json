@@ -1,46 +1,27 @@
 {
   "name": "gRPC Debugger",
-  "version": "1.3.32",
+  "version": "1.3.33",
   "manifest_version": 3,
-  "description": "Powerful gRPC and Connect-RPC debugging (Stable v2.24). No duplicate entries, FIFO matching, protobuf decoding.",
+  "description": "Inspect protobuf-ts gRPC-Web calls with the runtime metadata already present in the page.",
   "author": "魚尾尾",
   "icons": {
     "16": "launchericon-48-48.png",
     "48": "launchericon-48-48.png",
     "128": "launchericon-144-144.png"
   },
-  "devtools_page": "devtools.html",
   "background": {
     "service_worker": "background.js"
   },
   "permissions": [
+    "activeTab",
+    "debugger",
+    "sidePanel",
     "storage"
   ],
-  "host_permissions": [
-    "<all_urls>"
-  ],
-  "web_accessible_resources": [
-    {
-      "resources": [
-        "fetch-interceptor.js",
-        "connect-web-interceptor.js",
-        "grpc-web-injector.js"
-      ],
-      "matches": [
-        "<all_urls>"
-      ]
-    }
-  ],
-  "content_scripts": [
-    {
-      "matches": [
-        "<all_urls>"
-      ],
-      "js": [
-        "content-script.js"
-      ],
-      "run_at": "document_start",
-      "all_frames": true
-    }
-  ]
+  "action": {
+    "default_title": "開啟 gRPC Debugger"
+  },
+  "side_panel": {
+    "default_path": "index.html"
+  }
 }

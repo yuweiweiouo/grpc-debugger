@@ -113,7 +113,9 @@
             class:pending={entry.status === "pending"}
           ></span>
 
-          {#if entry._source === "interceptor"}
+          {#if entry._source === "protobuf-ts"}
+            <span class="source-tag source-p" title="protobuf-ts runtime">TS</span>
+          {:else if entry._source === "interceptor"}
             <span class="source-tag source-p" title="PostMessage">P</span>
           {:else}
             <span class="source-tag source-r" title="Reflection">R</span>
