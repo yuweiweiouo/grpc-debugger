@@ -221,26 +221,26 @@
             <span class="label">{$t("status")}:</span>
             <span class="val"
               >{entry.status === "pending"
-                ? "Pending (Waiting for Server...)"
+                ? $t("pending_status")
                 : entry.grpcStatus === 0
-                  ? "OK (0)"
-                  : `Error (${entry.grpcStatus})`}</span
+                  ? $t("ok_status")
+                  : `${$t("error")} (${entry.grpcStatus})`}</span
             >
           </div>
         </section>
         {#if entry.status === "pending"}
           <div class="pending-notice">
             <div class="spinner"></div>
-            <p>Waiting for response from server...</p>
+            <p>{$t("waiting_for_response")}</p>
           </div>
         {:else}
           {#if entry.service?.typeName}
             <section>
-              <h3>protobuf-ts Runtime</h3>
-              <div class="field"><span class="label">Service:</span><span class="val">{entry.service.typeName}</span></div>
-              <div class="field"><span class="label">Request type:</span><span class="val">{entry.requestType}</span></div>
-              <div class="field"><span class="label">Response type:</span><span class="val">{entry.responseType}</span></div>
-              {#if entry.responseError}<div class="field"><span class="label">Decode error:</span><span class="val">{entry.responseError}</span></div>{/if}
+              <h3>{$t("protobuf_ts_runtime")}</h3>
+              <div class="field"><span class="label">{$t("service")}:</span><span class="val">{entry.service.typeName}</span></div>
+              <div class="field"><span class="label">{$t("request_type")}:</span><span class="val">{entry.requestType}</span></div>
+              <div class="field"><span class="label">{$t("response_type")}:</span><span class="val">{entry.responseType}</span></div>
+              {#if entry.responseError}<div class="field"><span class="label">{$t("decode_error")}:</span><span class="val">{entry.responseError}</span></div>{/if}
             </section>
           {/if}
           {#if entry.requestHeaders}
@@ -257,15 +257,15 @@
       {:else if activeTab === "request"}
         <div class="data-view">
           <div class="data-header">
-            <span>Request Data</span>
+            <span>{$t("request_data")}</span>
             {#if entry.request}
               <div class="header-actions">
                 <div class="search-nav">
                   <input class="search-input" type="text" placeholder={$t('search_in_data')} bind:value={searchQuery} on:keydown={handleSearchKeyDown} />
                   {#if searchQuery}
                     <span class="match-counter">{totalMatches > 0 ? `${safeIndex + 1}/${totalMatches}` : '0/0'}</span>
-                    <button class="nav-btn" on:click={goPrev} disabled={totalMatches === 0} title="Previous (Shift+Enter)">▲</button>
-                    <button class="nav-btn" on:click={goNext} disabled={totalMatches === 0} title="Next (Enter)">▼</button>
+                    <button class="nav-btn" on:click={goPrev} disabled={totalMatches === 0} title={$t("previous_match")}>▲</button>
+                    <button class="nav-btn" on:click={goNext} disabled={totalMatches === 0} title={$t("next_match")}>▼</button>
                   {/if}
                 </div>
                 <button class="copy-btn" on:click={() => handleCopy(entry.request)}>
@@ -283,15 +283,15 @@
       {:else if activeTab === "response"}
         <div class="data-view">
           <div class="data-header">
-            <span>Response Data</span>
+            <span>{$t("response_data")}</span>
             {#if entry.response}
               <div class="header-actions">
                 <div class="search-nav">
                   <input class="search-input" type="text" placeholder={$t('search_in_data')} bind:value={searchQuery} on:keydown={handleSearchKeyDown} />
                   {#if searchQuery}
                     <span class="match-counter">{totalMatches > 0 ? `${safeIndex + 1}/${totalMatches}` : '0/0'}</span>
-                    <button class="nav-btn" on:click={goPrev} disabled={totalMatches === 0} title="Previous (Shift+Enter)">▲</button>
-                    <button class="nav-btn" on:click={goNext} disabled={totalMatches === 0} title="Next (Enter)">▼</button>
+                    <button class="nav-btn" on:click={goPrev} disabled={totalMatches === 0} title={$t("previous_match")}>▲</button>
+                    <button class="nav-btn" on:click={goNext} disabled={totalMatches === 0} title={$t("next_match")}>▼</button>
                   {/if}
                 </div>
                 <button class="copy-btn" on:click={() => handleCopy(entry.response)}>
@@ -303,7 +303,7 @@
           {#if entry.response}
             <JsonTree data={entry.response} {searchQuery} {activePath} currentPath="" />
           {:else if entry.status === "pending"}
-            <div class="no-data">Waiting for response...</div>
+            <div class="no-data">{$t("waiting_for_response")}</div>
           {:else}
             <div class="no-data">{$t("no_data")}</div>
           {/if}
@@ -353,7 +353,7 @@
             {#if entry.response}
               <JsonTree data={entry.response} {searchQuery} activePath={!activeInReq ? activePath : null} currentPath="" />
             {:else if entry.status === "pending"}
-              <div class="no-data">Waiting for response...</div>
+              <div class="no-data">{$t("waiting_for_response")}</div>
             {:else}
               <div class="no-data">{$t("no_data")}</div>
             {/if}
@@ -509,6 +509,11 @@
     background: var(--color-primary);
   }
 
+  .tabs {
+    overflow-x: auto;
+    flex-shrink: 0;
+  }
+
   .content {
     flex: 1;
     overflow-y: auto;
@@ -648,6 +653,22 @@
   .copy-btn:hover {
     background: var(--color-bg-hover);
     border-color: var(--color-text-tertiary);
+  }
+
+  @media (max-width: 640px) {
+    .data-header {
+      align-items: flex-start;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .header-actions {
+      width: 100%;
+      justify-content: space-between;
+    }
+
+    .search-nav { min-width: 0; }
+    .search-input { width: min(120px, 28vw); }
   }
 
   .no-data {

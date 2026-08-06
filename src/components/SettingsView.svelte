@@ -200,6 +200,7 @@
     font-weight: 500;
   }
 
+
   .toggle-row {
     display: flex;
     justify-content: space-between;

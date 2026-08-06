@@ -275,6 +275,7 @@ function handleRequestWillBeSent(source, params) {
     callId,
     endpoint,
     url: params.request.url,
+    startedAt: Date.now(),
   });
 }
 
@@ -306,11 +307,16 @@ async function handleLoadingFinished(source, params) {
       status: 'finished',
       response: responses.length <= 1 ? responses[0] : responses,
       responseReceivedAt: new Date().toISOString(),
+      duration: Date.now() - request.startedAt,
     };
     if (request.callId) await patchRecord(request.callId, patch);
     else await addRecord({ id: crypto.randomUUID(), tabId: source.tabId, timestamp: new Date().toISOString(), endpoint: request.endpoint, url: request.url, ...patch });
   } catch (error) {
-    if (request.callId) await patchRecord(request.callId, { status: 'finished', responseError: error instanceof Error ? error.message : String(error) });
+    if (request.callId) await patchRecord(request.callId, {
+      status: 'finished',
+      duration: Date.now() - request.startedAt,
+      responseError: error instanceof Error ? error.message : String(error),
+    });
   } finally {
     networkRequests.delete(key);
   }
@@ -319,7 +325,11 @@ async function handleLoadingFinished(source, params) {
 async function handleLoadingFailed(source, params) {
   const key = networkRequestKey(source, params?.requestId);
   const request = networkRequests.get(key);
-  if (request?.callId) await patchRecord(request.callId, { status: 'finished', responseError: params?.errorText || '網路請求失敗' });
+  if (request?.callId) await patchRecord(request.callId, {
+    status: 'finished',
+    duration: Date.now() - request.startedAt,
+    responseError: params?.errorText || '網路請求失敗',
+  });
   networkRequests.delete(key);
 }
 

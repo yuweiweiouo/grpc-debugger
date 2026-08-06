@@ -12,12 +12,15 @@
   import NetworkDetails from "./components/NetworkDetails.svelte";
   import ServicesView from "./components/ServicesView.svelte";
   import SettingsView from "./components/SettingsView.svelte";
-  import { refreshInspector } from "./stores/inspector";
+  import { clearInspectorRecords, refreshInspector } from "./stores/inspector";
+  import { preserveLog } from "./stores/network";
   import { activePage } from "./stores/ui";
   import { listPaneWidth } from "./stores/layout";
   import { theme } from "./stores/settings";
   let storageListener;
   let tabListener;
+  let navigationListener;
+  let splitView;
 
   onMount(() => {
     applyTheme($theme);
@@ -33,8 +36,14 @@
         }
       };
       tabListener = () => refreshInspector();
+      navigationListener = (tabId, { status }) => {
+        if (status === "loading" && !$preserveLog) {
+          clearInspectorRecords(tabId);
+        }
+      };
       chrome.storage.onChanged.addListener(storageListener);
       chrome.tabs.onActivated.addListener(tabListener);
+      chrome.tabs.onUpdated.addListener(navigationListener);
     }
   });
 
@@ -49,6 +58,9 @@
     if (typeof chrome !== "undefined" && tabListener) {
       chrome.tabs?.onActivated?.removeListener(tabListener);
     }
+    if (typeof chrome !== "undefined" && navigationListener) {
+      chrome.tabs?.onUpdated?.removeListener(navigationListener);
+    }
   });
 
   // --- Resizer Logic ---
@@ -58,7 +70,7 @@
     isResizing = true;
     window.addEventListener("mousemove", handleResize);
     window.addEventListener("mouseup", stopResizing);
-    document.body.style.cursor = "col-resize";
+    document.body.style.cursor = "row-resize";
     document.body.style.userSelect = "none";
   }
 
@@ -72,9 +84,12 @@
 
   function handleResize(e) {
     if (!isResizing) return;
-    const newWidth = e.clientX - 60;
-    if (newWidth > 200 && newWidth < 800) {
-      listPaneWidth.set(newWidth);
+    if (!splitView) return;
+    const { top, height } = splitView.getBoundingClientRect();
+    const newHeight = e.clientY - top;
+    const maxHeight = Math.max(180, height - 180);
+    if (newHeight > 140 && newHeight < maxHeight) {
+      listPaneWidth.set(newHeight);
     }
   }
 
@@ -100,7 +115,7 @@
       <header>
         <Toolbar />
       </header>
-      <div class="split-view" style="--list-width: {$listPaneWidth}px">
+      <div class="split-view" bind:this={splitView} style="--list-height: {$listPaneWidth}px">
         <div class="list-pane">
           <NetworkList />
         </div>
@@ -203,12 +218,14 @@
 
   .app-layout {
     display: flex;
+    flex-direction: column;
     height: 100vh;
     width: 100vw;
   }
 
   .main-content {
     flex: 1;
+    min-height: 0;
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -223,22 +240,23 @@
   .split-view {
     flex: 1;
     display: flex;
+    flex-direction: column;
     overflow: hidden;
     position: relative;
   }
 
   .resizer {
     appearance: none;
-    width: 4px;
-    height: 100%;
-    cursor: col-resize;
+    width: 100%;
+    height: 4px;
+    cursor: row-resize;
     background: transparent;
     border: 0;
     padding: 0;
     transition: background 0.2s;
     flex: 0 0 4px;
     z-index: 10;
-    margin: 0 -2px;
+    margin: -2px 0;
   }
 
   .resizer:hover,
@@ -247,10 +265,10 @@
   }
 
   .list-pane {
-    width: var(--list-width);
-    min-width: var(--list-width);
-    max-width: var(--list-width);
-    border-right: 1px solid var(--color-border);
+    width: 100%;
+    height: min(var(--list-height), 55%);
+    min-height: 140px;
+    border-bottom: 1px solid var(--color-border);
     background: var(--color-bg-primary);
     overflow: auto;
   }
@@ -259,5 +277,7 @@
     flex: 1;
     background: var(--color-bg-primary);
     overflow: hidden;
+    min-height: 0;
   }
+
 </style>
