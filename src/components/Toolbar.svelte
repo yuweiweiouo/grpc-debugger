@@ -4,7 +4,7 @@
    *
    * 提供網路日誌的過濾、清除、以及持久化設定（Preserve Log）。
    */
-  import { filterValue } from "../stores/network";
+  import { filterValue, preserveLog } from "../stores/network";
   import {
     clearInspectorRecords,
     inspectorError,
@@ -34,6 +34,7 @@
   }
 
   async function handleStart() {
+    urlFilter.set($filterValue);
     await startInspector();
     await refreshInspector();
   }
@@ -41,10 +42,14 @@
   async function handleStop() {
     await stopInspector();
   }
+
 </script>
 
 <div class="toolbar">
   <div class="left">
+    <button class="monitor-btn" class:stop={$monitoring} on:click={$monitoring ? handleStop : handleStart}>
+      {#if $monitoring}<Square size={14} /> {$t("stop")}{:else}<Play size={14} /> {$t("start")}{/if}
+    </button>
     <button
       class="icon-btn"
       on:click={handleClearLogs}
@@ -57,14 +62,14 @@
       <span class="search-icon"><Search size={14} /></span>
       <input
         type="text"
-        placeholder={$t("filter_placeholder")}
+        placeholder={$t("filter")}
         bind:value={$filterValue}
       />
     </div>
-    <input class="url-filter" type="text" placeholder="XHR/fetch URL 篩選，例如 /Service/" bind:value={$urlFilter} />
-    <button class="monitor-btn" class:stop={$monitoring} on:click={$monitoring ? handleStop : handleStart}>
-      {#if $monitoring}<Square size={14} /> 停止監看{:else}<Play size={14} /> 開始監看{/if}
-    </button>
+    <label class="preserve-checkbox">
+      <input type="checkbox" bind:checked={$preserveLog} />
+      <span>{$t("preserve_log")}</span>
+    </label>
   </div>
 
   <div class="right">
@@ -85,12 +90,13 @@
 <style>
   .toolbar {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     justify-content: space-between;
     position: relative;
     padding: 8px 12px;
-    height: 48px;
+    min-height: 48px;
     box-sizing: border-box;
+    gap: 6px;
   }
 
   .left {
@@ -98,6 +104,8 @@
     display: flex;
     align-items: center;
     gap: 10px;
+    flex-wrap: wrap;
+    min-width: 0;
   }
 
   .search-container {
@@ -106,7 +114,9 @@
     background: var(--color-bg-tertiary, #f3f4f6);
     border-radius: 6px;
     padding: 4px 8px;
-    width: 240px;
+    width: 140px;
+    flex: 0 1 140px;
+    min-width: 0;
   }
 
   .search-icon {
@@ -125,15 +135,6 @@
     color: var(--color-text-primary);
   }
 
-  .url-filter {
-    width: min(300px, 32vw);
-    padding: 6px 8px;
-    border: 1px solid var(--color-border);
-    border-radius: 6px;
-    background: var(--color-bg-primary);
-    font-size: 12px;
-  }
-
   .monitor-btn {
     display: inline-flex;
     align-items: center;
@@ -149,6 +150,18 @@
   }
 
   .monitor-btn.stop { background: var(--color-error); }
+
+  .preserve-checkbox {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+
+  .preserve-checkbox input { margin: 0; cursor: pointer; }
 
   .icon-btn {
     background: transparent;
@@ -173,19 +186,23 @@
     flex-direction: row;
     align-items: center;
     gap: 4px;
+    flex: 0 0 auto;
   }
 
   .error-message {
-    position: absolute;
-    right: 12px;
-    top: 50px;
+    flex: 1 0 100%;
     z-index: 20;
-    max-width: 50%;
     padding: 6px 8px;
     border-radius: 6px;
     background: var(--color-error-bg);
     color: var(--color-error);
     font-size: 11px;
+  }
+
+  @media (max-width: 640px) {
+    .toolbar { padding: 8px; }
+    .left { gap: 6px; }
+    .search-container { flex-basis: 110px; }
   }
 
   .icon-btn:disabled {

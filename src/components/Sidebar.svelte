@@ -7,14 +7,10 @@
   import { activePage, navigate } from "../stores/ui";
   import { t } from "../lib/i18n";
   import { APP_VERSION } from "../lib/version";
-  import { Activity, ShieldCheck, Settings, Box } from "lucide-svelte";
+  import { Activity, ShieldCheck, Settings } from "lucide-svelte";
 </script>
 
 <nav class="sidebar">
-  <div class="logo">
-    <Box size={24} color="#2563eb" />
-  </div>
-
   <div class="nav-items">
     <button
       class:active={$activePage === "network"}
@@ -47,41 +43,44 @@
 
 <style>
   .sidebar {
-    width: 64px;
+    width: auto;
+    height: 52px;
     background: var(--color-bg-primary);
-    border-right: 1px solid var(--color-border);
+    border-bottom: 1px solid var(--color-border);
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
     align-items: center;
-    padding: 8px 0;
-    gap: 12px;
-  }
-
-  .logo {
-    margin-bottom: 4px;
+    padding: 0 8px;
+    gap: 8px;
+    flex: 0 0 auto;
   }
 
   .nav-items {
-    flex: 1;
     display: flex;
-    flex-direction: column;
-    gap: 12px;
+    flex-direction: row;
+    gap: 4px;
+  }
+
+  .bottom {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: auto;
   }
 
   .version {
     font-size: 9px;
     font-weight: bold;
     color: var(--color-text-tertiary);
-    margin-top: 2px;
-    text-align: center;
+    margin-left: 2px;
     opacity: 0.5;
   }
 
   button {
     background: transparent;
     border: none;
-    padding: 12px;
-    border-radius: 12px;
+    padding: 8px;
+    border-radius: 8px;
     color: var(--color-text-secondary);
     cursor: pointer;
     transition: all 0.2s;
@@ -99,4 +98,5 @@
     background: var(--color-primary-bg);
     color: var(--color-primary);
   }
+
 </style>

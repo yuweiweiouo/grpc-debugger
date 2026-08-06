@@ -8,7 +8,7 @@ export const inspectorError = writable('');
 
 async function send(message) {
   if (typeof chrome === 'undefined' || !chrome.runtime) {
-    throw new Error('此介面必須從 Chrome 擴充功能的 Side Panel 開啟。');
+    throw new Error('此介面必須從 Chrome 擴充功能開啟。');
   }
   const response = await chrome.runtime.sendMessage(message);
   if (!response?.ok) throw new Error(response?.error || '擴充功能服務未回應');
@@ -61,10 +61,10 @@ export async function stopInspector() {
   }
 }
 
-export async function clearInspectorRecords() {
+export async function clearInspectorRecords(tabId) {
   try {
-    const tabId = await getCurrentTabId();
-    await send({ type: 'clear', tabId });
+    const targetTabId = Number.isInteger(tabId) ? tabId : await getCurrentTabId();
+    await send({ type: 'clear', tabId: targetTabId });
     await refreshInspector();
   } catch (error) {
     inspectorError.set(error instanceof Error ? error.message : String(error));

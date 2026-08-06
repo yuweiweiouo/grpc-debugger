@@ -85,6 +85,11 @@
       second: "2-digit",
     });
   }
+
+  function formatDuration(durationMs) {
+    const duration = Number(durationMs);
+    return Number.isFinite(duration) ? `${(duration / 1000).toFixed(2)}s` : "-";
+  }
 </script>
 
 <div
@@ -128,17 +133,19 @@
             <!-- svelte-ignore html_dangerous_html_in_svelte_html -->
             {@html highlightText(entry.method.split("/").pop(), $filterValue)}
           </span>
+          {#if entry.status === "pending"}
+            <span class="loading-dots" aria-label={$t("loading")}>
+              <span></span><span></span><span></span>
+            </span>
+          {:else if entry.status === "finished"}
+            <span class="duration">{formatDuration(entry.duration)}</span>
+          {/if}
         </div>
 
         <div class="meta-col">
-          <span class="time">
-            {entry.duration
-              ? `${Number(entry.duration).toFixed(2)}ms`
-              : entry.status === "pending"
-                ? "..."
-                : ""}
-          </span>
-          <span class="start-time">{formatStartTime(entry.startTime)}</span>
+          {#if entry.status === "finished"}
+            <span class="start-time">{formatStartTime(entry.startTime)}</span>
+          {/if}
         </div>
       </div>
     {/each}
@@ -256,6 +263,8 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    flex: 1 1 auto;
+    min-width: 0;
   }
 
   .meta-col {
@@ -272,12 +281,39 @@
     width: 60px;
   }
 
-  .time {
+  .duration {
     font-size: 11px;
     color: var(--color-text-tertiary);
-    min-width: 70px;
-    text-align: right;
     font-family: monospace;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex: 0 4 auto;
+    min-width: 0;
+    max-width: 62px;
+  }
+
+  .loading-dots {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    flex: 0 0 auto;
+  }
+
+  .loading-dots span {
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: var(--color-purple);
+    animation: loading-dot 1.05s ease-in-out infinite;
+  }
+
+  .loading-dots span:nth-child(2) { animation-delay: 0.15s; }
+  .loading-dots span:nth-child(3) { animation-delay: 0.3s; }
+
+  @keyframes loading-dot {
+    0%, 60%, 100% { transform: translateY(0); opacity: 0.35; }
+    30% { transform: translateY(-3px); opacity: 1; }
   }
 
   .empty {
