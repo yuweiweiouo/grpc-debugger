@@ -83,6 +83,8 @@ async function handleMessage(message) {
     case 'clear':
       await clearRecords(message.tabId);
       return {};
+    case 'inspectorRecordAdded':
+      return {};
     default:
       throw new Error('Unknown inspector request');
   }
@@ -790,7 +792,11 @@ function mutateRecords(mutator) {
   });
   return recordMutation;
 }
-function addRecord(record) { return mutateRecords((records) => [...records, record].slice(-MAX_RECORDS)); }
+function addRecord(record) {
+  return mutateRecords((records) => [...records, record].slice(-MAX_RECORDS)).then(() => {
+    chrome.runtime.sendMessage({ type: 'inspectorRecordAdded', tabId: record.tabId }).catch(() => {});
+  });
+}
 function patchRecord(id, patch) { return mutateRecords((records) => records.map((record) => record.id === id ? { ...record, ...patch } : record)); }
 async function getRecords(tabId) { await recordMutation; return (await loadRecordsCache()).filter((record) => record.tabId === tabId); }
 async function clearRecords(tabId) { await mutateRecords((records) => records.filter((record) => record.tabId !== tabId)); await flushRecords(); }
