@@ -12,7 +12,7 @@
   import NetworkDetails from "./components/NetworkDetails.svelte";
   import ServicesView from "./components/ServicesView.svelte";
   import SettingsView from "./components/SettingsView.svelte";
-  import { clearInspectorRecords, refreshInspector } from "./stores/inspector";
+  import { activeTabId, clearInspectorRecords, refreshInspector, selectInspectorTab } from "./stores/inspector";
   import { preserveLog } from "./stores/network";
   import { activePage } from "./stores/ui";
   import { listPaneWidth } from "./stores/layout";
@@ -24,6 +24,8 @@
   let splitView;
   let resizeFrame = null;
   let pendingListPaneHeight = null;
+  let panelWindowId = null;
+  const panelTabId = getPanelTabId();
 
   onMount(() => {
     applyTheme($theme);
@@ -31,19 +33,29 @@
     mediaQuery.addEventListener('change', onSystemThemeChange);
 
     if (typeof chrome !== "undefined" && chrome.runtime) {
-      refreshInspector();
+      if (Number.isInteger(panelTabId)) {
+        selectInspectorTab(panelTabId);
+      } else {
+        void initializeInspectorTab();
+      }
       storageListener = (changes, areaName) => {
         if (areaName !== "local") return;
-        if (changes.protobufTsInspectorRecords || Object.keys(changes).some((key) => key.startsWith("protobufTsInspectorConfig:"))) {
-          refreshInspector();
+        const tabId = $activeTabId;
+        if (!Number.isInteger(tabId)) return;
+        if (changes[`protobufTsInspectorConfig:${tabId}`] || changes[`protobufTsInspectorHiddenServices:${tabId}`]) {
+          refreshInspector(tabId);
         }
       };
-      tabListener = () => refreshInspector();
+      tabListener = ({ tabId, windowId }) => {
+        if (Number.isInteger(panelTabId)) return;
+        if (panelWindowId !== null && windowId !== panelWindowId) return;
+        selectInspectorTab(tabId);
+      };
       runtimeListener = (message) => {
-        if (message?.type === "inspectorRecordAdded") refreshInspector();
+        if (message?.type === "inspectorRecordAdded" && message.tabId === $activeTabId) refreshInspector(message.tabId);
       };
       navigationListener = ({ tabId, frameId }) => {
-        if (frameId === 0 && !$preserveLog) {
+        if (frameId === 0 && tabId === $activeTabId && !$preserveLog) {
           clearInspectorRecords(tabId);
         }
       };
@@ -53,6 +65,22 @@
       chrome.runtime.onMessage.addListener(runtimeListener);
     }
   });
+
+  async function initializeInspectorTab() {
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (!Number.isInteger(tab?.id)) return;
+      panelWindowId = tab.windowId ?? null;
+      selectInspectorTab(tab.id);
+    } catch {
+      refreshInspector();
+    }
+  }
+
+  function getPanelTabId() {
+    const value = Number(new URLSearchParams(window.location.search).get('tabId'));
+    return Number.isInteger(value) && value >= 0 ? value : null;
+  }
 
   onDestroy(() => {
     stopResizing();

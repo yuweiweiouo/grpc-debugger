@@ -13,7 +13,6 @@
     requestDetectionEnabled,
     setProtoDetection,
     setRequestDetection,
-    urlFilter,
   } from "../stores/inspector";
   import { t } from "../lib/i18n";
   import { Play, Search, Square, Trash2 } from "lucide-svelte";
@@ -22,17 +21,11 @@
     await clearInspectorRecords();
   }
 
-  function syncDetectionFilter() {
-    urlFilter.set($filterValue);
-  }
-
   async function handleRequestDetection() {
-    syncDetectionFilter();
     await setRequestDetection(!$requestDetectionEnabled);
   }
 
   async function handleProtoDetection() {
-    syncDetectionFilter();
     await setProtoDetection(!$protoDetectionEnabled);
   }
 

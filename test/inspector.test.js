@@ -21,6 +21,7 @@ describe('inspector clearing', () => {
   let log;
   let selectedId;
   let resolveClear;
+  let refreshInspector;
 
   beforeEach(async () => {
     localStorage.clear();
@@ -62,6 +63,7 @@ describe('inspector clearing', () => {
       setProtoDetection,
       requestDetectionEnabled,
       protoDetectionEnabled,
+      refreshInspector,
     } = await import('../src/stores/inspector.js'));
     ({ log, selectedId } = await import('../src/stores/network.js'));
   });
@@ -116,5 +118,32 @@ describe('inspector clearing', () => {
 
     expect(get(requestDetectionEnabled)).toBe(false);
     expect(get(protoDetectionEnabled)).toBe(false);
+  });
+
+  it('較晚完成的舊分頁刷新不會覆蓋目前面板', async () => {
+    const responses = new Map();
+    chrome.runtime.sendMessage.mockImplementation((message) => {
+      if (message.type === 'status' || message.type === 'records') {
+        return new Promise((resolve) => {
+          responses.set(`${message.tabId}:${message.type}`, resolve);
+        });
+      }
+      return Promise.resolve({ ok: true });
+    });
+    activeTabId.set(12);
+
+    const tabARefresh = refreshInspector(12);
+    activeTabId.set(99);
+    const tabBRefresh = refreshInspector(99);
+
+    responses.get('99:status')({ ok: true, attached: true, urlFilter: '', hiddenServices: [] });
+    responses.get('99:records')({ ok: true, records: [{ id: 'tab-b', tabId: 99, endpoint: 'B' }] });
+    await tabBRefresh;
+
+    responses.get('12:status')({ ok: true, attached: true, urlFilter: '', hiddenServices: [] });
+    responses.get('12:records')({ ok: true, records: [{ id: 'tab-a', tabId: 12, endpoint: 'A' }] });
+    await tabARefresh;
+
+    expect(get(log).map((entry) => entry.id)).toEqual(['tab-b']);
   });
 });

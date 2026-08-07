@@ -1,5 +1,5 @@
 import { writable } from 'svelte/store';
-import { clearLogs, replaceInspectorLogs } from './network';
+import { clearLogs, replaceInspectorLogs, resetInspectorLogs } from './network';
 
 export const activeTabId = writable(null);
 export const monitoring = writable(false);
@@ -10,6 +10,7 @@ export const protoDetectionEnabled = writable(false);
 export const detectionUpdating = writable(false);
 
 let refreshVersion = 0;
+let detectionOperationVersion = 0;
 const clearingTabIds = new Set();
 
 async function send(message) {
@@ -24,25 +25,56 @@ async function send(message) {
 async function getCurrentTabId() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!Number.isInteger(tab?.id)) throw new Error('找不到目前分頁');
-  activeTabId.set(tab.id);
   return tab.id;
 }
 
-export async function refreshInspector() {
+async function getInspectorTabId() {
+  const tabId = getStoreValue(activeTabId);
+  if (Number.isInteger(tabId)) return tabId;
+
+  const currentTabId = await getCurrentTabId();
+  activeTabId.set(currentTabId);
+  return currentTabId;
+}
+
+export function selectInspectorTab(tabId) {
+  if (!Number.isInteger(tabId)) return;
+
+  if (getStoreValue(activeTabId) !== tabId) {
+    activeTabId.set(tabId);
+    resetInspectorLogs();
+  }
+  ++refreshVersion;
+  ++detectionOperationVersion;
+  detectionUpdating.set(false);
+  void refreshInspector(tabId);
+}
+
+export async function refreshInspector(tabId) {
   const version = ++refreshVersion;
   try {
-    const tabId = await getCurrentTabId();
+    const targetTabId = Number.isInteger(tabId) ? tabId : await getInspectorTabId();
     const [status, records] = await Promise.all([
-      send({ type: 'status', tabId }),
-      send({ type: 'records', tabId }),
+      send({ type: 'status', tabId: targetTabId }),
+      send({ type: 'records', tabId: targetTabId }),
     ]);
-    if (version !== refreshVersion || clearingTabIds.has(tabId)) return;
+    const isCurrentView = () => {
+      return version === refreshVersion &&
+        getStoreValue(activeTabId) === targetTabId &&
+        !clearingTabIds.has(targetTabId);
+    };
+    if (!isCurrentView()) return;
 
     monitoring.set(Boolean(status.attached));
     urlFilter.set(status.urlFilter ?? '');
     requestDetectionEnabled.set(Boolean(status.requestDetectionEnabled));
     protoDetectionEnabled.set(Boolean(status.protoDetectionEnabled));
-    await replaceInspectorLogs(records.records ?? [], status.hiddenServices ?? []);
+    const applied = await replaceInspectorLogs(
+      records.records ?? [],
+      status.hiddenServices ?? [],
+      isCurrentView,
+    );
+    if (!applied || !isCurrentView()) return;
     inspectorError.set('');
   } catch (error) {
     if (version !== refreshVersion) return;
@@ -68,9 +100,12 @@ export async function setProtoDetection(enabled) {
 }
 
 async function setDetectionMode(requestEnabled, protoEnabled) {
+  let tabId;
+  let operationVersion;
   detectionUpdating.set(true);
   try {
-    const tabId = await getCurrentTabId();
+    tabId = await getInspectorTabId();
+    operationVersion = ++detectionOperationVersion;
     const filter = getStoreValue(urlFilter);
     const result = await send({
       type: 'setDetectionMode',
@@ -79,15 +114,20 @@ async function setDetectionMode(requestEnabled, protoEnabled) {
       protoDetectionEnabled: protoEnabled,
       urlFilter: filter.trim(),
     });
+    if (operationVersion !== detectionOperationVersion || getStoreValue(activeTabId) !== tabId) return result;
     monitoring.set(Boolean(result.attached));
     requestDetectionEnabled.set(Boolean(result.requestDetectionEnabled));
     protoDetectionEnabled.set(Boolean(result.protoDetectionEnabled));
     urlFilter.set(result.urlFilter ?? '');
     inspectorError.set('');
   } catch (error) {
-    inspectorError.set(error instanceof Error ? error.message : String(error));
+    if (operationVersion === detectionOperationVersion && getStoreValue(activeTabId) === tabId) {
+      inspectorError.set(error instanceof Error ? error.message : String(error));
+    }
   } finally {
-    detectionUpdating.set(false);
+    if (operationVersion === detectionOperationVersion && getStoreValue(activeTabId) === tabId) {
+      detectionUpdating.set(false);
+    }
   }
 }
 
@@ -100,24 +140,25 @@ export async function clearInspectorRecords(tabId) {
 
   let targetTabId;
   try {
-    targetTabId = hasTargetTabId ? tabId : await getCurrentTabId();
+    targetTabId = hasTargetTabId ? tabId : await getInspectorTabId();
     clearingTabIds.add(targetTabId);
     ++refreshVersion;
+    ++detectionOperationVersion;
     await send({ type: 'clear', tabId: targetTabId });
     clearingTabIds.delete(targetTabId);
-    await refreshInspector();
+    await refreshInspector(targetTabId);
   } catch (error) {
     if (Number.isInteger(targetTabId)) {
       clearingTabIds.delete(targetTabId);
     }
-    await refreshInspector();
+    await refreshInspector(targetTabId);
     inspectorError.set(error instanceof Error ? error.message : String(error));
   }
 }
 
 export async function setHiddenServices(serviceNames) {
   try {
-    const tabId = await getCurrentTabId();
+    const tabId = await getInspectorTabId();
     await send({ type: 'setHiddenServices', tabId, services: serviceNames });
   } catch (error) {
     inspectorError.set(error instanceof Error ? error.message : String(error));

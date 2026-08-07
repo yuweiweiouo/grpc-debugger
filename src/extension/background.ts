@@ -7,9 +7,9 @@ import { createProtoServiceCacheEntry, findCachedProtoMetadata } from './proto-c
 // inspector pauses immediately before fetch/XHR, discovers that metadata, and
 // delegates JSON conversion back to the page's protobuf-ts runtime.
 const PROTOCOL_VERSION = '1.3';
-const RECORDS_KEY = 'protobufTsInspectorRecords';
-const PROTO_CACHE_KEY = 'protobufTsInspectorProtoCache';
-const MAX_RECORDS = 200;
+const RECORDS_KEY = 'protobufTsInspectorRecordsV2';
+const PROTO_CACHE_KEY = 'protobufTsInspectorProtoCacheV3';
+const MAX_RECORDS_PER_TAB = 200;
 const OBJECT_GROUP = 'protobuf-ts-inspector';
 const PAUSE_INSPECTION_BUDGET_MS = 350;
 const INSPECTION_COMMAND_TIMEOUT_MS = 200;
@@ -20,6 +20,8 @@ const networkRequests = new Map();
 const hiddenServicesByTab = new Map();
 const detectionConfigs = new Map();
 const detectedServicesByTab = new Map();
+const detectionTransitions = new Map();
+const lightweightInterceptorStates = new Map();
 let recordMutation = Promise.resolve();
 let recordsCache = null;
 let recordsLoad = null;
@@ -32,6 +34,22 @@ let protoCacheMutation = Promise.resolve();
 chrome.sidePanel
   .setPanelBehavior({ openPanelOnActionClick: true })
   .catch((error) => console.error('Unable to configure Side Panel:', error));
+
+chrome.tabs.onActivated.addListener(({ tabId }) => {
+  void bindSidePanelToTab(tabId);
+});
+
+void chrome.tabs.query({ active: true, lastFocusedWindow: true }).then(([tab]) => {
+  if (Number.isInteger(tab?.id)) return bindSidePanelToTab(tab.id);
+}).catch((error) => console.warn('Unable to find active tab for Side Panel:', error));
+
+function bindSidePanelToTab(tabId) {
+  return chrome.sidePanel.setOptions({
+    tabId,
+    path: `index.html?tabId=${tabId}`,
+    enabled: true,
+  }).catch((error) => console.warn('Unable to bind Side Panel to tab:', error));
+}
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   void handleMessage(message, sender)
@@ -68,6 +86,10 @@ chrome.debugger.onDetach.addListener((source) => {
   if (source.tabId != null) clearRuntimeStateForTab(source.tabId);
 });
 
+chrome.webNavigation.onCommitted.addListener(({ tabId, frameId }) => {
+  if (frameId === 0) lightweightInterceptorStates.delete(tabId);
+});
+
 async function handleMessage(message, sender) {
   switch (message?.type) {
     case 'start':
@@ -83,11 +105,14 @@ async function handleMessage(message, sender) {
       );
     case 'lightweightBridgeReady':
       if (Number.isInteger(sender?.tab?.id)) {
-        const config = await getDetectionConfig(sender.tab.id);
-        await configureLightweightInterceptor(
-          sender.tab.id,
-          Boolean(config?.requestDetectionEnabled && !config?.protoDetectionEnabled),
-        );
+        await queueDetectionTransition(sender.tab.id, async () => {
+          const config = await getDetectionConfig(sender.tab.id);
+          await configureLightweightInterceptor(
+            sender.tab.id,
+            Boolean(config?.requestDetectionEnabled && !config?.protoDetectionEnabled),
+            true,
+          );
+        });
       }
       return {};
     case 'lightweightPayload':
@@ -96,20 +121,24 @@ async function handleMessage(message, sender) {
       }
       return {};
     case 'status':
-      {
+      return queueDetectionTransition(message.tabId, async () => {
         const config = await getDetectionConfig(message.tabId);
-        if (config?.requestDetectionEnabled && !config?.protoDetectionEnabled) {
+        if (config?.requestDetectionEnabled && config.protoDetectionEnabled) {
+          if (!(await isAttached(message.tabId))) {
+            await startProtoInspection(message.tabId, config.urlFilter ?? '', config);
+          }
+        } else if (config?.requestDetectionEnabled) {
           await configureLightweightInterceptor(message.tabId, true);
         }
         const hiddenServices = (await chrome.storage.local.get(hiddenServicesStorageKey(message.tabId)))[hiddenServicesStorageKey(message.tabId)] ?? [];
-      return {
-        attached: await isAttached(message.tabId),
-        urlFilter: config?.urlFilter ?? '',
-        requestDetectionEnabled: Boolean(config?.requestDetectionEnabled),
-        protoDetectionEnabled: Boolean(config?.protoDetectionEnabled),
-        hiddenServices,
-      };
-      }
+        return {
+          attached: await isAttached(message.tabId),
+          urlFilter: config?.urlFilter ?? '',
+          requestDetectionEnabled: Boolean(config?.requestDetectionEnabled),
+          protoDetectionEnabled: Boolean(config?.protoDetectionEnabled),
+          hiddenServices,
+        };
+      });
     case 'records':
       return { records: await getRecords(message.tabId) };
     case 'setHiddenServices':
@@ -128,6 +157,24 @@ async function handleMessage(message, sender) {
 
 async function setDetectionMode(tabId, requestDetectionEnabled, protoDetectionEnabled, urlFilter) {
   if (!Number.isInteger(tabId)) throw new Error('無效的分頁 ID');
+  return queueDetectionTransition(tabId, () => {
+    return setDetectionModeForTab(tabId, requestDetectionEnabled, protoDetectionEnabled, urlFilter);
+  });
+}
+
+async function queueDetectionTransition(tabId, operation) {
+  const previousTransition = detectionTransitions.get(tabId) ?? Promise.resolve();
+  const transition = previousTransition.catch(() => {}).then(operation);
+  detectionTransitions.set(tabId, transition);
+
+  try {
+    return await transition;
+  } finally {
+    if (detectionTransitions.get(tabId) === transition) detectionTransitions.delete(tabId);
+  }
+}
+
+async function setDetectionModeForTab(tabId, requestDetectionEnabled, protoDetectionEnabled, urlFilter) {
   const previous = await getDetectionConfig(tabId) ?? {};
   const requestEnabled = Boolean(requestDetectionEnabled);
   const protoEnabled = requestEnabled && Boolean(protoDetectionEnabled);
@@ -213,12 +260,14 @@ async function stopProtoInspection(tabId, config = {}) {
     await chrome.debugger.detach(target);
   }
 
-  await flushRecords();
+  // 紀錄會自行排程持久化；不可因其他分頁的大量寫入阻塞此分頁的停止操作。
+  void flushRecords().catch(() => {});
   detectedServicesByTab.delete(tabId);
   clearRuntimeStateForTab(tabId);
 }
 
-async function configureLightweightInterceptor(tabId, enabled) {
+async function configureLightweightInterceptor(tabId, enabled, force = false) {
+  if (!force && lightweightInterceptorStates.get(tabId) === enabled) return;
   try {
     await chrome.scripting.executeScript({
       target: { tabId },
@@ -239,6 +288,7 @@ async function configureLightweightInterceptor(tabId, enabled) {
       },
       args: [enabled],
     });
+    lightweightInterceptorStates.set(tabId, enabled);
   } catch (error) {
     // Chrome 內部頁面與受限制頁面無法注入，不影響其他分頁的偵測。
     console.warn('Unable to configure lightweight interceptor:', error);
@@ -247,6 +297,7 @@ async function configureLightweightInterceptor(tabId, enabled) {
 
 async function addLightweightPayload(tabId, payload) {
   if (!payload?.url || payload.method !== 'POST') return;
+  if (isServiceHidden(tabId, payload.url)) return;
 
   const config = await getDetectionConfig(tabId);
   if (!config?.requestDetectionEnabled || config.protoDetectionEnabled) return;
@@ -258,12 +309,12 @@ async function addLightweightPayload(tabId, payload) {
 
   let endpoint;
   try { endpoint = new URL(payload.url).pathname; } catch { endpoint = String(payload.url).split('?')[0]; }
-  const metadata = await getCachedProtoMetadata(endpoint);
+  const metadata = await getCachedProtoMetadata(tabId, payload.url, endpoint);
   const timestamp = new Date(payload.timestamp ?? Date.now()).toISOString();
   const httpStatus = Number(payload.httpStatus) || 0;
 
   await addRecord({
-    id: `lightweight-${tabId}-${payload.timestamp ?? Date.now()}`,
+    id: createRecordId(`lightweight-${tabId}`),
     tabId,
     timestamp,
     startTime: timestamp,
@@ -320,7 +371,7 @@ async function handlePaused(source, params) {
     const endpoint = captured.endpoint || `/${captured.service.typeName}/${captured.method.name}`;
     const cacheKey = endpointKey(source, endpoint);
     const { request, ...metadata } = captured;
-    await cacheDetectedService(source.tabId, captured);
+    await cacheDetectedService(source.tabId, params?.data?.url, captured);
     if (located.adapter === 'grpc-web') {
       endpointTypes.set(cacheKey, {
         ...await getGrpcWebTypeHandles(source, located.methodObjectId, located.inputObjectId),
@@ -629,8 +680,9 @@ function handleRequestWillBeSent(source, params) {
   const typeInfo = endpointTypes.get(endpointKey(source, endpoint));
   if (!typeInfo) return;
   const requestId = params.requestId;
+  const recordId = createRecordId(`cdp-${debuggerTargetKey(source)}-${requestId}`);
   const record = {
-    id: requestId,
+    id: recordId,
     requestId,
     tabId: source.tabId,
     timestamp: new Date().toISOString(),
@@ -646,16 +698,17 @@ function handleRequestWillBeSent(source, params) {
   networkRequests.set(networkRequestKey(source, requestId), {
     source,
     requestId,
+    recordId,
     endpoint,
     url: params.request.url,
     startedAt: Date.now(),
     typeInfo,
     requestContentType,
   });
-  void decodeAndPatchRequestBody(source, requestId, typeInfo, requestContentType);
+  void decodeAndPatchRequestBody(source, requestId, recordId, typeInfo, requestContentType);
 }
 
-async function decodeAndPatchRequestBody(source, requestId, typeInfo, contentType) {
+async function decodeAndPatchRequestBody(source, requestId, recordId, typeInfo, contentType) {
   try {
     const postData = await send(source, 'Network.getRequestPostData', { requestId });
     const request = await decodeGrpcPayload(
@@ -665,9 +718,9 @@ async function decodeAndPatchRequestBody(source, requestId, typeInfo, contentTyp
       contentType,
       'request',
     );
-    await patchRecord(requestId, { request });
+    await patchRecord(source.tabId, recordId, { request });
   } catch (error) {
-    await patchRecord(requestId, { requestError: error instanceof Error ? error.message : String(error) });
+    await patchRecord(source.tabId, recordId, { requestError: error instanceof Error ? error.message : String(error) });
   }
 }
 
@@ -676,7 +729,7 @@ function handleResponseReceived(source, params) {
   if (!request) return;
   const headers = params?.response?.headers ?? {};
   request.contentType = String(headers['content-type'] ?? headers['Content-Type'] ?? params?.response?.mimeType ?? '').toLowerCase();
-  void patchRecord(request.requestId, {
+  void patchRecord(source.tabId, request.recordId, {
     httpStatus: params?.response?.status,
     responseHeaders: headers,
   });
@@ -696,9 +749,9 @@ async function handleLoadingFinished(source, params) {
       responseReceivedAt: new Date().toISOString(),
       duration: Date.now() - request.startedAt,
     };
-    await patchRecord(request.requestId, patch);
+    await patchRecord(source.tabId, request.recordId, patch);
   } catch (error) {
-    await patchRecord(request.requestId, {
+    await patchRecord(source.tabId, request.recordId, {
       status: 'finished',
       duration: Date.now() - request.startedAt,
       responseError: error instanceof Error ? error.message : String(error),
@@ -711,7 +764,7 @@ async function handleLoadingFinished(source, params) {
 async function handleLoadingFailed(source, params) {
   const key = networkRequestKey(source, params?.requestId);
   const request = networkRequests.get(key);
-  if (request) await patchRecord(request.requestId, {
+  if (request) await patchRecord(source.tabId, request.recordId, {
     status: 'finished',
     duration: Date.now() - request.startedAt,
     responseError: params?.errorText || '網路請求失敗',
@@ -887,7 +940,8 @@ async function loadRecordsCache() {
   if (recordsCache) return recordsCache;
   if (!recordsLoad) {
     recordsLoad = chrome.storage.local.get(RECORDS_KEY).then((stored) => {
-      recordsCache = Array.isArray(stored[RECORDS_KEY]) ? stored[RECORDS_KEY] : [];
+      const value = stored[RECORDS_KEY];
+      recordsCache = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
       return recordsCache;
     });
   }
@@ -918,36 +972,44 @@ function resetDetectedServices(tabId) {
   detectedServicesByTab.set(tabId, new Set());
 }
 
-async function cacheDetectedService(tabId, captured) {
+async function cacheDetectedService(tabId, rawUrl, captured) {
   const serviceName = captured?.service?.typeName;
   const entry = createProtoServiceCacheEntry(captured);
   if (!serviceName || !entry) return;
+  const origin = cacheOrigin(rawUrl);
 
   const detectedServices = detectedServicesByTab.get(tabId) ?? new Set();
-  if (detectedServices.has(serviceName)) return;
-  detectedServices.add(serviceName);
+  const serviceKey = `${origin}:${serviceName}`;
+  if (detectedServices.has(serviceKey)) return;
+  detectedServices.add(serviceKey);
   detectedServicesByTab.set(tabId, detectedServices);
 
   protoCacheMutation = protoCacheMutation.catch(() => {}).then(async () => {
     const cache = await loadProtoCache();
-    cache[serviceName] = entry;
+    cache[tabId] ??= {};
+    cache[tabId][origin] ??= {};
+    cache[tabId][origin][serviceName] = entry;
     await chrome.storage.local.set({ [PROTO_CACHE_KEY]: cache });
   });
 
   try {
     await protoCacheMutation;
   } catch (error) {
-    detectedServices.delete(serviceName);
+    detectedServices.delete(serviceKey);
     throw error;
   }
 }
 
-async function getCachedProtoMetadata(endpoint) {
-  return findCachedProtoMetadata(await loadProtoCache(), endpoint);
+async function getCachedProtoMetadata(tabId, rawUrl, endpoint) {
+  const cache = await loadProtoCache();
+  return findCachedProtoMetadata(cache[tabId]?.[cacheOrigin(rawUrl)], endpoint);
 }
 
 function persistRecords() {
-  recordFlush = chrome.storage.local.set({ [RECORDS_KEY]: recordsCache ?? [] });
+  const snapshot = recordsCache ?? {};
+  recordFlush = recordFlush.catch(() => {}).then(() => {
+    return chrome.storage.local.set({ [RECORDS_KEY]: snapshot });
+  });
   return recordFlush;
 }
 
@@ -968,35 +1030,56 @@ async function flushRecords() {
   await persistRecords();
 }
 
-function mutateRecords(mutator) {
+function mutateRecords(tabId, mutator) {
   recordMutation = recordMutation.catch(() => {}).then(async () => {
-    const records = await loadRecordsCache();
-    recordsCache = mutator(records);
+    const recordsByTab = await loadRecordsCache();
+    recordsCache = {
+      ...recordsByTab,
+      [tabId]: mutator(recordsByTab[tabId] ?? []),
+    };
     scheduleRecordFlush();
   });
   return recordMutation;
 }
 function addRecord(record) {
-  return mutateRecords((records) => [...records, record].slice(-MAX_RECORDS)).then(() => {
+  return mutateRecords(record.tabId, (records) => {
+    const retained = records.length >= MAX_RECORDS_PER_TAB
+      ? records.slice(1)
+      : records;
+    return [...retained, record];
+  }).then(() => {
     chrome.runtime.sendMessage({ type: 'inspectorRecordAdded', tabId: record.tabId }).catch(() => {});
   });
 }
-function patchRecord(id, patch) { return mutateRecords((records) => records.map((record) => record.id === id ? { ...record, ...patch } : record)); }
-async function getRecords(tabId) { await recordMutation; return (await loadRecordsCache()).filter((record) => record.tabId === tabId); }
-async function clearRecords(tabId) { await mutateRecords((records) => records.filter((record) => record.tabId !== tabId)); await flushRecords(); }
+function patchRecord(tabId, id, patch) {
+  return mutateRecords(tabId, (records) => records.map((record) => {
+    return record.id === id ? { ...record, ...patch } : record;
+  }));
+}
+async function getRecords(tabId) { await recordMutation; return [...((await loadRecordsCache())[tabId] ?? [])]; }
+async function clearRecords(tabId) { await mutateRecords(tabId, () => []); await flushRecords(); }
 function clearRuntimeStateForTab(tabId) {
   hiddenServicesByTab.delete(tabId);
   detectedServicesByTab.delete(tabId);
+  lightweightInterceptorStates.delete(tabId);
   clearDecoderStateForTab(tabId);
 }
 function clearDecoderStateForTab(tabId) {
   const prefix = `${tabId}:`;
   for (const key of endpointTypes.keys()) if (key.startsWith(prefix)) endpointTypes.delete(key);
   for (const [key, request] of networkRequests) if (request.source.tabId === tabId) networkRequests.delete(key);
+  for (const key of processingTargets) if (key.startsWith(prefix)) processingTargets.delete(key);
 }
 function endpointKey(source, endpoint) { return `${source.tabId}:${source.sessionId ?? 'root'}:${endpoint}`; }
 function debuggerTargetKey(source) { return `${source.tabId}:${source.sessionId ?? 'root'}`; }
 function networkRequestKey(source, requestId) { return `${debuggerTargetKey(source)}:${requestId}`; }
+function createRecordId(prefix) {
+  if (typeof globalThis.crypto?.randomUUID === 'function') return `${prefix}:${globalThis.crypto.randomUUID()}`;
+  return `${prefix}:${Date.now()}:${Math.random().toString(36).slice(2)}`;
+}
+function cacheOrigin(rawUrl) {
+  try { return new URL(rawUrl).origin; } catch { return 'unknown'; }
+}
 function configStorageKey(tabId) { return `protobufTsInspectorConfig:${tabId}`; }
 function hiddenServicesStorageKey(tabId) { return `protobufTsInspectorHiddenServices:${tabId}`; }
 function getHeaderValue(headers, name) {
