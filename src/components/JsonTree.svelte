@@ -7,6 +7,7 @@
   export let expanded = depth < 2;
   export let searchQuery = "";
   export let activePath = null;
+  export let matchingAncestorPaths = new Set();
   export let currentPath = "";
 
   $: myPath =
@@ -22,8 +23,7 @@
   $: keys = isObject ? Object.keys(data).filter((k) => k !== "$typeName") : [];
   $: type = getType(data);
 
-  $: hasMatchInChildren =
-    searchQuery && isObject ? checkChildrenMatch(data, searchQuery) : false;
+  $: hasMatchInChildren = matchingAncestorPaths.has(myPath);
   $: hasActiveInChildren =
     activePath != null && myPath !== "" && activePath.startsWith(myPath + ".");
   $: shouldExpand = expanded || hasMatchInChildren || hasActiveInChildren;
@@ -54,24 +54,6 @@
     }
     if (typeof val === "string") return `"${val}"`;
     return String(val);
-  }
-
-  function checkChildrenMatch(obj, query) {
-    if (!query || !obj) return false;
-    const q = query.toLowerCase();
-    for (const key of Object.keys(obj)) {
-      if (key === "$typeName") continue;
-      if (key.toLowerCase().includes(q)) return true;
-      const val = obj[key];
-      if (val !== null && val !== undefined) {
-        const str = typeof val === "object" ? "" : String(val);
-        if (str.toLowerCase().includes(q)) return true;
-        if (typeof val === "object" && !(val instanceof Uint8Array)) {
-          if (checkChildrenMatch(val, query)) return true;
-        }
-      }
-    }
-    return false;
   }
 
   function isMatch(text) {
@@ -135,6 +117,7 @@
           depth={depth + 1}
           {searchQuery}
           {activePath}
+          {matchingAncestorPaths}
           currentPath={myPath}
         />
       {/each}

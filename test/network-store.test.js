@@ -45,6 +45,7 @@ describe('network selective reprocessing', () => {
     enableReflection.set(true);
 
     vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'debug').mockImplementation(() => {});
     vi.spyOn(protoEngine, 'findMethod').mockReturnValue({
       requestType: 'pkg.Request',
       responseType: 'pkg.Response',
@@ -183,6 +184,7 @@ describe('network store optimization paths', () => {
     enableReflection.set(true);
 
     vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'debug').mockImplementation(() => {});
     vi.spyOn(protoEngine, 'findMethod').mockReturnValue({
       requestType: 'pkg.Request',
       responseType: 'pkg.Response',
@@ -299,5 +301,20 @@ describe('network store optimization paths', () => {
 
     expect(get(filteredLog).map(entry => entry.id)).toEqual(['first']);
     expect(get(selectedEntry)?.id).toBe('second');
+  });
+
+  it('addLog 最多保留最新 200 筆紀錄', async () => {
+    for (let index = 0; index <= 200; index += 1) {
+      await addLog(makeEntry({
+        id: `entry-${index}`,
+        _source: 'interceptor',
+        request: { index },
+      }));
+    }
+
+    const entries = get(log);
+    expect(entries).toHaveLength(200);
+    expect(entries[0].id).toBe('entry-1');
+    expect(entries.at(-1).id).toBe('entry-200');
   });
 });

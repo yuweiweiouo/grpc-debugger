@@ -1,10 +1,13 @@
 import { writable } from 'svelte/store';
-import { replaceInspectorLogs } from './network';
+import { clearLogs, replaceInspectorLogs } from './network';
 
 export const activeTabId = writable(null);
 export const monitoring = writable(false);
 export const urlFilter = writable('');
 export const inspectorError = writable('');
+
+let refreshVersion = 0;
+const clearingTabIds = new Set();
 
 async function send(message) {
   if (typeof chrome === 'undefined' || !chrome.runtime) {
@@ -23,17 +26,21 @@ async function getCurrentTabId() {
 }
 
 export async function refreshInspector() {
+  const version = ++refreshVersion;
   try {
     const tabId = await getCurrentTabId();
     const [status, records] = await Promise.all([
       send({ type: 'status', tabId }),
       send({ type: 'records', tabId }),
     ]);
+    if (version !== refreshVersion || clearingTabIds.has(tabId)) return;
+
     monitoring.set(Boolean(status.attached));
     urlFilter.set(status.urlFilter ?? '');
     replaceInspectorLogs(records.records ?? [], status.hiddenServices ?? []);
     inspectorError.set('');
   } catch (error) {
+    if (version !== refreshVersion) return;
     inspectorError.set(error instanceof Error ? error.message : String(error));
   }
 }
@@ -62,11 +69,25 @@ export async function stopInspector() {
 }
 
 export async function clearInspectorRecords(tabId) {
+  const hasTargetTabId = Number.isInteger(tabId);
+  if (!hasTargetTabId || getStoreValue(activeTabId) === tabId) {
+    // 先清除目前面板，避免等待背景 storage 寫入才更新 UI。
+    clearLogs(true);
+  }
+
+  let targetTabId;
   try {
-    const targetTabId = Number.isInteger(tabId) ? tabId : await getCurrentTabId();
+    targetTabId = hasTargetTabId ? tabId : await getCurrentTabId();
+    clearingTabIds.add(targetTabId);
+    ++refreshVersion;
     await send({ type: 'clear', tabId: targetTabId });
+    clearingTabIds.delete(targetTabId);
     await refreshInspector();
   } catch (error) {
+    if (Number.isInteger(targetTabId)) {
+      clearingTabIds.delete(targetTabId);
+    }
+    await refreshInspector();
     inspectorError.set(error instanceof Error ? error.message : String(error));
   }
 }
