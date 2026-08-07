@@ -22,6 +22,8 @@
   let navigationListener;
   let runtimeListener;
   let splitView;
+  let resizeFrame = null;
+  let pendingListPaneHeight = null;
 
   onMount(() => {
     applyTheme($theme);
@@ -53,6 +55,7 @@
   });
 
   onDestroy(() => {
+    stopResizing();
     if (typeof window !== "undefined") {
       const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
       mediaQuery.removeEventListener('change', onSystemThemeChange);
@@ -86,6 +89,11 @@
     isResizing = false;
     window.removeEventListener("mousemove", handleResize);
     window.removeEventListener("mouseup", stopResizing);
+    if (resizeFrame !== null) {
+      window.cancelAnimationFrame(resizeFrame);
+      resizeFrame = null;
+    }
+    flushPendingResize();
     document.body.style.cursor = "default";
     document.body.style.userSelect = "auto";
   }
@@ -97,8 +105,24 @@
     const newHeight = e.clientY - top;
     const maxHeight = Math.max(180, height - 180);
     if (newHeight > 140 && newHeight < maxHeight) {
-      listPaneWidth.set(newHeight);
+      queueListPaneHeight(newHeight);
     }
+  }
+
+  function queueListPaneHeight(height) {
+    pendingListPaneHeight = height;
+    if (resizeFrame !== null) return;
+
+    resizeFrame = window.requestAnimationFrame(() => {
+      resizeFrame = null;
+      flushPendingResize();
+    });
+  }
+
+  function flushPendingResize() {
+    if (pendingListPaneHeight === null) return;
+    listPaneWidth.set(pendingListPaneHeight);
+    pendingListPaneHeight = null;
   }
 
   function applyTheme(themeValue) {

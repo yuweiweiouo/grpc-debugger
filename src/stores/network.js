@@ -14,6 +14,7 @@ import { enablePostMessage, enableReflection } from './settings';
 import { createLogger } from '../lib/logger';
 
 const logger = createLogger('Network');
+const MAX_LOG_ENTRIES = 200;
 
 // 原始日誌陣列
 export const log = writable([]);
@@ -98,7 +99,9 @@ export async function addLog(entry) {
       return newList;
     }
     logger.debug('New entry:', entry.id);
-    return [...list, entry];
+    return list.length >= MAX_LOG_ENTRIES
+      ? [...list.slice(1), entry]
+      : [...list, entry];
   });
 
   // 如果有新產生的 Schema，則觸發「全局重新解析」以修復先前因缺少 Schema 而解析失敗的舊紀錄

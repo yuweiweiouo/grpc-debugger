@@ -11,6 +11,7 @@
   import { selectedEntry } from "../stores/network";
   import { t } from "../lib/i18n";
   import { normalizeActiveTab } from "../lib/network-details-tabs";
+  import { createSearchIndex } from "../lib/json-search";
   import { combinedView } from "../stores/settings";
   import JsonTree from "./JsonTree.svelte";
   import ProtoFieldRow from "./ProtoFieldRow.svelte";
@@ -21,29 +22,16 @@
   let replayStatus = "";
   let currentMatchIndex = 0;
 
-  function collectMatches(obj, query, prefix = '') {
-    const results = [];
-    if (!query || !obj || typeof obj !== 'object' || obj instanceof Uint8Array) return results;
-    const q = query.toLowerCase();
-    for (const key of Object.keys(obj)) {
-      if (key === '$typeName') continue;
-      const path = prefix ? `${prefix}.${key}` : key;
-      if (key.toLowerCase().includes(q)) results.push(path + ':key');
-      const val = obj[key];
-      if (val !== null && val !== undefined) {
-        if (typeof val === 'object' && !(val instanceof Uint8Array)) {
-          results.push(...collectMatches(val, query, path));
-        } else {
-          const str = typeof val === 'string' ? `"${val}"` : String(val);
-          if (str.toLowerCase().includes(q)) results.push(path + ':value');
-        }
-      }
-    }
-    return results;
-  }
+  const emptySearchIndex = { matches: [], matchingAncestorPaths: new Set() };
 
-  $: reqMatches = searchQuery && entry?.request ? collectMatches(entry.request, searchQuery) : [];
-  $: resMatches = searchQuery && entry?.response ? collectMatches(entry.response, searchQuery) : [];
+  $: requestSearch = searchQuery && entry?.request && (activeTab === 'request' || activeTab === 'data')
+    ? createSearchIndex(entry.request, searchQuery)
+    : emptySearchIndex;
+  $: responseSearch = searchQuery && entry?.response && (activeTab === 'response' || activeTab === 'data')
+    ? createSearchIndex(entry.response, searchQuery)
+    : emptySearchIndex;
+  $: reqMatches = requestSearch.matches;
+  $: resMatches = responseSearch.matches;
   $: matches = activeTab === 'request' ? reqMatches
              : activeTab === 'response' ? resMatches
              : [...reqMatches, ...resMatches];
@@ -275,7 +263,7 @@
             {/if}
           </div>
           {#if entry.request}
-            <JsonTree data={entry.request} {searchQuery} {activePath} currentPath="" />
+            <JsonTree data={entry.request} {searchQuery} {activePath} matchingAncestorPaths={requestSearch.matchingAncestorPaths} currentPath="" />
           {:else}
             <div class="no-data">{$t("no_data")}</div>
           {/if}
@@ -301,7 +289,7 @@
             {/if}
           </div>
           {#if entry.response}
-            <JsonTree data={entry.response} {searchQuery} {activePath} currentPath="" />
+            <JsonTree data={entry.response} {searchQuery} {activePath} matchingAncestorPaths={responseSearch.matchingAncestorPaths} currentPath="" />
           {:else if entry.status === "pending"}
             <div class="no-data">{$t("waiting_for_response")}</div>
           {:else}
@@ -331,7 +319,7 @@
               {/if}
             </div>
             {#if entry.request}
-              <JsonTree data={entry.request} {searchQuery} activePath={activeInReq ? activePath : null} currentPath="" />
+              <JsonTree data={entry.request} {searchQuery} activePath={activeInReq ? activePath : null} matchingAncestorPaths={requestSearch.matchingAncestorPaths} currentPath="" />
             {:else}
               <div class="no-data">{$t("no_data")}</div>
             {/if}
@@ -351,7 +339,7 @@
               {/if}
             </div>
             {#if entry.response}
-              <JsonTree data={entry.response} {searchQuery} activePath={!activeInReq ? activePath : null} currentPath="" />
+              <JsonTree data={entry.response} {searchQuery} activePath={!activeInReq ? activePath : null} matchingAncestorPaths={responseSearch.matchingAncestorPaths} currentPath="" />
             {:else if entry.status === "pending"}
               <div class="no-data">{$t("waiting_for_response")}</div>
             {:else}
