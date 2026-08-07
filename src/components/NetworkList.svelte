@@ -90,6 +90,14 @@
     const duration = Number(durationMs);
     return Number.isFinite(duration) ? `${(duration / 1000).toFixed(2)}s` : "-";
   }
+
+  function isParsed(entry) {
+    const hasPayload = entry.requestRaw || entry.responseRaw || entry.request || entry.response;
+    if (!hasPayload) return false;
+    if (entry.requestRaw && !entry.request) return false;
+    if (entry.responseRaw && !entry.response) return false;
+    return ![entry.request, entry.response].some((value) => value?._error || value?._decodeReason);
+  }
 </script>
 
 <div
@@ -118,12 +126,10 @@
             class:pending={entry.status === "pending"}
           ></span>
 
-          {#if entry._source === "protobuf-ts"}
-            <span class="source-tag source-p" title="protobuf-ts runtime">TS</span>
-          {:else if entry._source === "interceptor"}
-            <span class="source-tag source-p" title="PostMessage">P</span>
+          {#if isParsed(entry)}
+            <span class="source-tag source-parsed" title={$t("parsed")}>{$t("parsed")}</span>
           {:else}
-            <span class="source-tag source-r" title="Reflection">R</span>
+            <span class="source-tag source-unparsed" title={$t("unparsed")}>{$t("unparsed")}</span>
           {/if}
 
           <span
@@ -214,14 +220,14 @@
     flex-shrink: 0;
   }
 
-  .source-p {
-    background: var(--color-badge-p-bg);
-    color: var(--color-badge-p-text);
+  .source-parsed {
+    background: var(--color-success-bg);
+    color: var(--color-success);
   }
 
-  .source-r {
-    background: var(--color-badge-r-bg);
-    color: var(--color-badge-r-text);
+  .source-unparsed {
+    background: var(--color-bg-tertiary);
+    color: var(--color-text-secondary);
   }
 
   .dot {

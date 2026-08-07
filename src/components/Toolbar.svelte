@@ -7,11 +7,12 @@
   import { filterValue, preserveLog } from "../stores/network";
   import {
     clearInspectorRecords,
+    detectionUpdating,
     inspectorError,
-    monitoring,
-    refreshInspector,
-    startInspector,
-    stopInspector,
+    protoDetectionEnabled,
+    requestDetectionEnabled,
+    setProtoDetection,
+    setRequestDetection,
     urlFilter,
   } from "../stores/inspector";
   import { t } from "../lib/i18n";
@@ -21,24 +22,43 @@
     await clearInspectorRecords();
   }
 
-  async function handleStart() {
+  function syncDetectionFilter() {
     urlFilter.set($filterValue);
-    await startInspector();
-    await refreshInspector();
   }
 
-  async function handleStop() {
-    await stopInspector();
+  async function handleRequestDetection() {
+    syncDetectionFilter();
+    await setRequestDetection(!$requestDetectionEnabled);
+  }
+
+  async function handleProtoDetection() {
+    syncDetectionFilter();
+    await setProtoDetection(!$protoDetectionEnabled);
   }
 
 </script>
 
-<div class="toolbar">
-  <div class="left">
-    <button class="monitor-btn" class:stop={$monitoring} on:click={$monitoring ? handleStop : handleStart}>
-      {#if $monitoring}<Square size={14} /> {$t("stop")}{:else}<Play size={14} /> {$t("start")}{/if}
-    </button>
-    <div class="search-container">
+  <div class="toolbar">
+    <div class="left">
+      <button
+        type="button"
+        class="monitor-btn"
+        class:stop={$requestDetectionEnabled}
+        disabled={$detectionUpdating}
+        title={$t("request_detection_desc")}
+        aria-pressed={$requestDetectionEnabled}
+        on:click={handleRequestDetection}
+      >{#if $requestDetectionEnabled}<Square size={14} /> {$t("stop")}{$t("request_detection")}{:else}<Play size={14} />{$t("request_detection")}{/if}</button>
+      <button
+        type="button"
+        class="monitor-btn"
+        class:stop={$protoDetectionEnabled}
+        disabled={!$requestDetectionEnabled || $detectionUpdating}
+        title={$t("proto_detection_desc")}
+        aria-pressed={$protoDetectionEnabled}
+        on:click={handleProtoDetection}
+      >{#if $protoDetectionEnabled}<Square size={14} /> {$t("stop")}{$t("proto_detection")}{:else}<Play size={14} />{$t("proto_detection")}{/if}</button>
+      <div class="search-container">
       <span class="search-icon"><Search size={14} /></span>
       <input
         type="text"
@@ -126,6 +146,7 @@
     font-size: 12px;
     cursor: pointer;
     white-space: nowrap;
+    transition: all 0.2s;
   }
 
   .monitor-btn.stop { background: var(--color-error); }

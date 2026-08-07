@@ -9,6 +9,8 @@ function extensionScripts() {
       const { build } = await import('esbuild');
       const scripts = [
         'background',
+        'request-interceptor',
+        'request-bridge',
       ];
       for (const name of scripts) {
         await build({

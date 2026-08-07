@@ -98,6 +98,12 @@ export const translations = {
     previous_match: 'Previous match',
     next_match: 'Next match',
     loading: 'Loading',
+    parsed: 'Proto',
+    unparsed: 'N/A',
+    request_detection: 'Request detection',
+    request_detection_desc: 'List gRPC and Connect requests without decoding payloads.',
+    proto_detection: 'Proto detection',
+    proto_detection_desc: 'Attach Chrome Debugger to detect runtime Proto types and decode messages.',
   },
   zh: {
     network: '網路紀錄',
@@ -191,6 +197,12 @@ export const translations = {
     previous_match: '上一筆符合項目',
     next_match: '下一筆符合項目',
     loading: '載入中',
+    parsed: 'Proto',
+    unparsed: 'N/A',
+    request_detection: '偵測請求',
+    request_detection_desc: '不解碼 payload，僅列出 gRPC 與 Connect 請求。',
+    proto_detection: '偵測 Proto',
+    proto_detection_desc: '附加 Chrome Debugger，偵測 runtime Proto 型別並解碼訊息。',
   }
 };
 

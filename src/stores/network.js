@@ -12,6 +12,7 @@ import { protoEngine } from '../lib/proto-engine';
 import { tryAutoReflection, hasReflected, services } from './schema';
 import { enablePostMessage, enableReflection } from './settings';
 import { createLogger } from '../lib/logger';
+import { decodeCachedProtoMessage } from '../lib/cached-proto-decoder';
 
 const logger = createLogger('Network');
 const MAX_LOG_ENTRIES = 200;
@@ -159,7 +160,7 @@ export function clearLogs(force = false) {
  * 將背景服務透過 chrome.debugger 擷取的 protobuf-ts 紀錄轉成既有 UI 的資料形狀。
  * 這些紀錄已在頁面 runtime 解碼，絕不可再套用 HAR/Reflection 解碼流程。
  */
-export function replaceInspectorLogs(records, hiddenServices = []) {
+export async function replaceInspectorLogs(records, hiddenServices = []) {
   const hiddenServiceNames = new Set(hiddenServices);
   const entries = [...records].sort((a, b) => {
     return new Date(a.timestamp || 0).getTime() - new Date(b.timestamp || 0).getTime();
@@ -172,10 +173,14 @@ export function replaceInspectorLogs(records, hiddenServices = []) {
       method: methodPath,
       endpoint: record.method?.name || methodPath.split('/').pop() || '',
       startTime: record.timestamp,
-      grpcStatus: record.responseError || record.inspectorError ? 2 : 0,
-      _source: 'protobuf-ts',
+      grpcStatus: record.grpcStatus ?? (record.responseError || record.inspectorError ? 2 : 0),
+      _source: record._source ?? 'protobuf-ts',
     };
   });
+
+  await Promise.all(entries
+    .filter((entry) => entry._source === 'lightweight' && (entry.requestRaw || entry.responseRaw))
+    .map((entry) => processEntry(entry)));
 
   log.set(entries);
   const capturedServices = new Map();
@@ -221,8 +226,8 @@ async function processEntry(entry, forceReprocess = false) {
     try {
       const payload = await extractPayload(entry.requestRaw, entry.requestBase64Encoded, entry.requestHeaders);
       if (payload) {
-        const typeName = methodInfo?.requestType || null;
-        entry.request = protoEngine.decodeMessage(typeName, payload);
+        const typeName = methodInfo?.requestType || entry.requestType || null;
+        entry.request = decodePayload(entry, typeName, payload);
       }
     } catch (e) {
       entry.request = { _error: e.message };
@@ -233,14 +238,20 @@ async function processEntry(entry, forceReprocess = false) {
   if (entry.responseRaw && (retryResponse || !entry.response)) {
     try {
       const payload = await extractPayload(entry.responseRaw, entry.responseBase64Encoded, entry.responseHeaders);
-      const typeName = methodInfo?.responseType || null;
+      const typeName = methodInfo?.responseType || entry.responseType || null;
       if (payload) {
-        entry.response = protoEngine.decodeMessage(typeName, payload);
+        entry.response = decodePayload(entry, typeName, payload);
       }
     } catch (e) {
       entry.response = { _error: e.message };
     }
   }
+}
+
+function decodePayload(entry, typeName, payload) {
+  const decoded = protoEngine.decodeMessage(typeName, payload);
+  if (!isSchemaDependentDecodeFailure(decoded)) return decoded;
+  return decodeCachedProtoMessage(entry.schema, typeName, payload) ?? decoded;
 }
 
 function getEntryRetryPlan(entry) {
