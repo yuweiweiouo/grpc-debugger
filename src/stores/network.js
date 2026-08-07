@@ -180,7 +180,7 @@ export async function replaceInspectorLogs(records, hiddenServices = [], shouldA
 
   await Promise.all(entries
     .filter((entry) => entry._source === 'lightweight' && (entry.requestRaw || entry.responseRaw))
-    .map((entry) => processEntry(entry)));
+    .map((entry) => processEntry(entry, getEntryRetryPlan(entry))));
 
   if (!shouldApply()) return false;
   const visibleEntries = entries.filter((entry) => {

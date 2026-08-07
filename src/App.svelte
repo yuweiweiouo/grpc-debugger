@@ -25,6 +25,9 @@
   let resizeFrame = null;
   let pendingListPaneHeight = null;
   let panelWindowId = null;
+  let recordRefreshTimer = null;
+  let recordRefreshInFlight = false;
+  let queuedRecordRefreshTabId = null;
   const panelTabId = getPanelTabId();
 
   onMount(() => {
@@ -52,7 +55,12 @@
         selectInspectorTab(tabId);
       };
       runtimeListener = (message) => {
-        if (message?.type === "inspectorRecordAdded" && message.tabId === $activeTabId) refreshInspector(message.tabId);
+        if (
+          (message?.type === "inspectorRecordAdded" || message?.type === "inspectorSchemaAdded") &&
+          message.tabId === $activeTabId
+        ) {
+          scheduleRecordRefresh(message.tabId);
+        }
       };
       navigationListener = ({ tabId, frameId }) => {
         if (frameId === 0 && tabId === $activeTabId && !$preserveLog) {
@@ -82,8 +90,26 @@
     return Number.isInteger(value) && value >= 0 ? value : null;
   }
 
+  function scheduleRecordRefresh(tabId) {
+    queuedRecordRefreshTabId = tabId;
+    if (recordRefreshTimer !== null || recordRefreshInFlight) return;
+
+    recordRefreshTimer = window.setTimeout(async () => {
+      recordRefreshTimer = null;
+      const refreshTabId = queuedRecordRefreshTabId;
+      queuedRecordRefreshTabId = null;
+      if (!Number.isInteger(refreshTabId)) return;
+
+      recordRefreshInFlight = true;
+      await refreshInspector(refreshTabId);
+      recordRefreshInFlight = false;
+      if (queuedRecordRefreshTabId === $activeTabId) scheduleRecordRefresh(queuedRecordRefreshTabId);
+    }, 75);
+  }
+
   onDestroy(() => {
     stopResizing();
+    if (recordRefreshTimer !== null) window.clearTimeout(recordRefreshTimer);
     if (typeof window !== "undefined") {
       const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
       mediaQuery.removeEventListener('change', onSystemThemeChange);

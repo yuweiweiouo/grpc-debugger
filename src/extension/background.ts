@@ -12,6 +12,7 @@ const PROTO_CACHE_KEY = 'protobufTsInspectorProtoCacheV3';
 const MAX_RECORDS_PER_TAB = 200;
 const OBJECT_GROUP = 'protobuf-ts-inspector';
 const PAUSE_INSPECTION_BUDGET_MS = 350;
+const PAUSE_WATCHDOG_MS = 300;
 const INSPECTION_COMMAND_TIMEOUT_MS = 200;
 
 const processingTargets = new Set();
@@ -357,6 +358,18 @@ async function handlePaused(source, params) {
     return;
   }
   processingTargets.add(targetKey);
+  let resumed = false;
+  let inspectionExpired = false;
+  const resumeOnce = async () => {
+    if (resumed) return;
+    resumed = true;
+    await resumeDebugger(source);
+  };
+  const watchdog = setTimeout(() => {
+    inspectionExpired = true;
+    processingTargets.delete(targetKey);
+    void resumeOnce();
+  }, PAUSE_WATCHDOG_MS);
 
   try {
     const callFrames = params?.callFrames ?? [];
@@ -368,24 +381,35 @@ async function handlePaused(source, params) {
       : await captureRpcCall(source, located.methodObjectId, located.inputObjectId);
     if (!captured) return;
 
+    // schema 已是擷取到的純資料；watchdog 恢復頁面後仍必須持久化，供重整後的 lightweight 模式解碼。
+    void cacheDetectedService(source.tabId, params?.data?.url, captured)
+      .catch((error) => console.warn('Unable to cache protobuf service:', error));
+    if (inspectionExpired) return;
+
     const endpoint = captured.endpoint || `/${captured.service.typeName}/${captured.method.name}`;
     const cacheKey = endpointKey(source, endpoint);
     const { request, ...metadata } = captured;
-    await cacheDetectedService(source.tabId, params?.data?.url, captured);
     if (located.adapter === 'grpc-web') {
       endpointTypes.set(cacheKey, {
         ...await getGrpcWebTypeHandles(source, located.methodObjectId, located.inputObjectId),
         metadata,
       });
     } else {
-      await registerProtobufServiceMethods(source, located.methodObjectId, captured);
+      await registerProtobufMethod(
+        source,
+        located.methodObjectId,
+        captured,
+        captured.method.name,
+        captured.method,
+      );
     }
   } catch (error) {
     // Non-protobuf requests and navigation can invalidate a paused scope.
     // Never surface these internal inspection failures as blank RPC records.
     console.warn('Skipping paused request inspection:', error);
   } finally {
-    await resumeDebugger(source);
+    clearTimeout(watchdog);
+    await resumeOnce();
     processingTargets.delete(targetKey);
   }
 }
@@ -994,6 +1018,8 @@ async function cacheDetectedService(tabId, rawUrl, captured) {
 
   try {
     await protoCacheMutation;
+    await enrichLightweightRecords(tabId);
+    chrome.runtime.sendMessage({ type: 'inspectorSchemaAdded', tabId }).catch(() => {});
   } catch (error) {
     detectedServices.delete(serviceKey);
     throw error;
@@ -1002,7 +1028,22 @@ async function cacheDetectedService(tabId, rawUrl, captured) {
 
 async function getCachedProtoMetadata(tabId, rawUrl, endpoint) {
   const cache = await loadProtoCache();
-  return findCachedProtoMetadata(cache[tabId]?.[cacheOrigin(rawUrl)], endpoint);
+  return findProtoMetadataForUrl(cache[tabId], rawUrl, endpoint);
+}
+
+function findProtoMetadataForUrl(cacheByOrigin, rawUrl, endpoint) {
+  const origin = cacheOrigin(rawUrl);
+  return findCachedProtoMetadata(cacheByOrigin?.[origin], endpoint)
+    ?? (origin === 'unknown' ? null : findCachedProtoMetadata(cacheByOrigin?.unknown, endpoint));
+}
+
+async function enrichLightweightRecords(tabId) {
+  const cache = await loadProtoCache();
+  await mutateRecords(tabId, (records) => records.map((record) => {
+    if (record._source !== 'lightweight' || !record.url || !record.endpoint) return record;
+    const metadata = findProtoMetadataForUrl(cache[tabId], record.url, record.endpoint);
+    return metadata ? { ...record, ...metadata } : record;
+  }));
 }
 
 function persistRecords() {

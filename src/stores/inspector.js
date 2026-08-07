@@ -125,7 +125,8 @@ async function setDetectionMode(requestEnabled, protoEnabled) {
       inspectorError.set(error instanceof Error ? error.message : String(error));
     }
   } finally {
-    if (operationVersion === detectionOperationVersion && getStoreValue(activeTabId) === tabId) {
+    if (operationVersion === undefined ||
+      (operationVersion === detectionOperationVersion && getStoreValue(activeTabId) === tabId)) {
       detectionUpdating.set(false);
     }
   }

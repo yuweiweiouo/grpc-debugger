@@ -230,6 +230,27 @@ describe('network store optimization paths', () => {
     expect(get(log).map((entry) => entry.id)).toEqual(['visible']);
   });
 
+  it('新 schema 回填後會重解碼先前的 lightweight missing schema 紀錄', async () => {
+    await replaceInspectorLogs([makeEntry({
+      id: 'missing-schema',
+      _source: 'lightweight',
+      endpoint: '/pkg.Service/Call',
+      requestRaw: new Uint8Array([1, 2, 3]),
+      request: {
+        _error: '找不到 Schema 定義: pkg.Request',
+        _decodeReason: 'missing_schema',
+      },
+      requestType: 'pkg.Request',
+      schema: { messages: {}, enums: {} },
+    })]);
+
+    expect(protoEngine.decodeMessage).toHaveBeenCalledWith('pkg.Request', expect.any(Uint8Array));
+    expect(get(log)[0].request).toEqual({
+      $typeName: 'pkg.Request',
+      size: 3,
+    });
+  });
+
   it('filteredLog 在 entry 缺少 endpoint 時仍可依 method 過濾', () => {
     filterValue.set('stream');
     log.set([
