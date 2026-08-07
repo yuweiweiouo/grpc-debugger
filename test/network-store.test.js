@@ -18,6 +18,7 @@ const {
   selectedEntry,
   selectedId,
   addLog,
+  replaceInspectorLogs,
   reprocessAllLogs,
   clearLogs,
 } = await import('../src/stores/network.js');
@@ -218,6 +219,15 @@ describe('network store optimization paths', () => {
     const entries = get(filteredLog);
 
     expect(entries.map(entry => entry.id)).toEqual(['hidden', 'visible']);
+  });
+
+  it('replaceInspectorLogs 會隱藏已停用服務的既有紀錄', async () => {
+    await replaceInspectorLogs([
+      makeEntry({ id: 'hidden', method: '/pkg.HiddenService/Call' }),
+      makeEntry({ id: 'visible', method: '/pkg.VisibleService/Call' }),
+    ], ['pkg.HiddenService']);
+
+    expect(get(log).map((entry) => entry.id)).toEqual(['visible']);
   });
 
   it('filteredLog 在 entry 缺少 endpoint 時仍可依 method 過濾', () => {

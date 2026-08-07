@@ -160,12 +160,12 @@ export function clearLogs(force = false) {
  * 將背景服務透過 chrome.debugger 擷取的 protobuf-ts 紀錄轉成既有 UI 的資料形狀。
  * 這些紀錄已在頁面 runtime 解碼，絕不可再套用 HAR/Reflection 解碼流程。
  */
-export async function replaceInspectorLogs(records, hiddenServices = []) {
+export async function replaceInspectorLogs(records, hiddenServices = [], shouldApply = () => true) {
   const hiddenServiceNames = new Set(hiddenServices);
   const entries = [...records].sort((a, b) => {
     return new Date(a.timestamp || 0).getTime() - new Date(b.timestamp || 0).getTime();
   }).map((record) => {
-    const methodPath = record.endpoint || (record.service?.typeName && record.method?.name
+    const methodPath = record.endpoint || record.method || (record.service?.typeName && record.method?.name
       ? `/${record.service.typeName}/${record.method.name}`
       : '');
     return {
@@ -182,7 +182,11 @@ export async function replaceInspectorLogs(records, hiddenServices = []) {
     .filter((entry) => entry._source === 'lightweight' && (entry.requestRaw || entry.responseRaw))
     .map((entry) => processEntry(entry)));
 
-  log.set(entries);
+  if (!shouldApply()) return false;
+  const visibleEntries = entries.filter((entry) => {
+    return !hiddenServiceNames.has(getEntryServiceName(entry));
+  });
+  log.set(visibleEntries);
   const capturedServices = new Map();
   for (const entry of entries) {
     const service = entry.service;
@@ -206,7 +210,19 @@ export async function replaceInspectorLogs(records, hiddenServices = []) {
   services.set([...capturedServices.values()]);
 
   const selected = get(selectedId);
-  if (selected && !entries.some((entry) => entry.id === selected)) selectedId.set(null);
+  if (selected && !visibleEntries.some((entry) => entry.id === selected)) selectedId.set(null);
+  return true;
+}
+
+export function resetInspectorLogs() {
+  clearLogs(true);
+  services.set([]);
+}
+
+function getEntryServiceName(entry) {
+  if (entry.service?.typeName) return entry.service.typeName;
+  const pathSegments = String(entry.method ?? '').split('/').filter(Boolean);
+  return pathSegments.length >= 2 ? pathSegments.at(-2) : '';
 }
 
 /**
