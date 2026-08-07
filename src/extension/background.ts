@@ -18,6 +18,7 @@ const INSPECTION_COMMAND_TIMEOUT_MS = 200;
 const processingTargets = new Set();
 const endpointTypes = new Map();
 const networkRequests = new Map();
+const preCapturedCalls = new Map();
 const hiddenServicesByTab = new Map();
 const detectionConfigs = new Map();
 const detectedServicesByTab = new Map();
@@ -285,6 +286,7 @@ async function configureLightweightInterceptor(tabId, enabled, force = false) {
       func: (isEnabled) => {
         if (window.__GRPC_DEBUGGER_LIGHTWEIGHT_INTERCEPTOR__) {
           window.__GRPC_DEBUGGER_LIGHTWEIGHT_INTERCEPTOR__.enabled = isEnabled;
+          window.__GRPC_DEBUGGER_LIGHTWEIGHT_INTERCEPTOR__.configured = true;
         }
       },
       args: [enabled],
@@ -381,14 +383,20 @@ async function handlePaused(source, params) {
       : await captureRpcCall(source, located.methodObjectId, located.inputObjectId);
     if (!captured) return;
 
+    const endpoint = captured.endpoint || `/${captured.service.typeName}/${captured.method.name}`;
+    const { request, ...metadata } = captured;
+    enqueuePreCapturedCall(source, endpoint, {
+      adapter: located.adapter,
+      metadata,
+      request,
+    });
+
     // schema 已是擷取到的純資料；watchdog 恢復頁面後仍必須持久化，供重整後的 lightweight 模式解碼。
     void cacheDetectedService(source.tabId, params?.data?.url, captured)
       .catch((error) => console.warn('Unable to cache protobuf service:', error));
     if (inspectionExpired) return;
 
-    const endpoint = captured.endpoint || `/${captured.service.typeName}/${captured.method.name}`;
     const cacheKey = endpointKey(source, endpoint);
-    const { request, ...metadata } = captured;
     if (located.adapter === 'grpc-web') {
       endpointTypes.set(cacheKey, {
         ...await getGrpcWebTypeHandles(source, located.methodObjectId, located.inputObjectId),
@@ -696,13 +704,14 @@ function handleRequestWillBeSent(source, params) {
   if (source.tabId == null || !params?.requestId || !params?.request?.url) return;
   if (isServiceHidden(source.tabId, params.request.url)) return;
   if (params.request.method !== 'POST') return;
+  const preCapturedCall = takePreCapturedCall(source, params.request.url);
+  const knownEndpoint = findKnownEndpoint(source, params.request.url);
   const requestContentType = getHeaderValue(params.request.headers, 'content-type').toLowerCase();
-  if (!isGrpcContentType(requestContentType)) return;
-  const endpoint = findKnownEndpoint(source, params.request.url);
+  if (!isGrpcContentType(requestContentType) && !knownEndpoint && !preCapturedCall) return;
+  const endpoint = knownEndpoint ?? preCapturedCall?.endpoint;
   if (!endpoint) return;
 
   const typeInfo = endpointTypes.get(endpointKey(source, endpoint));
-  if (!typeInfo) return;
   const requestId = params.requestId;
   const recordId = createRecordId(`cdp-${debuggerTargetKey(source)}-${requestId}`);
   const record = {
@@ -713,10 +722,15 @@ function handleRequestWillBeSent(source, params) {
     endpoint,
     method: endpoint,
     url: params.request.url,
-    requestHeaders: params.request.headers ?? {},
+    requestHeaders: {
+      ...(params.request.headers ?? {}),
+      'content-type': requestContentType || 'application/grpc',
+    },
     status: 'pending',
-    _source: typeInfo.adapter ?? 'protobuf-ts',
-    ...typeInfo.metadata,
+    _source: typeInfo?.adapter ?? preCapturedCall?.adapter ?? 'protobuf-ts',
+    ...preCapturedCall?.metadata,
+    ...typeInfo?.metadata,
+    request: preCapturedCall?.request,
   };
   void addRecord(record);
   networkRequests.set(networkRequestKey(source, requestId), {
@@ -727,9 +741,11 @@ function handleRequestWillBeSent(source, params) {
     url: params.request.url,
     startedAt: Date.now(),
     typeInfo,
-    requestContentType,
+    requestContentType: requestContentType || 'application/grpc',
   });
-  void decodeAndPatchRequestBody(source, requestId, recordId, typeInfo, requestContentType);
+  if (typeInfo) {
+    void decodeAndPatchRequestBody(source, requestId, recordId, typeInfo, requestContentType || 'application/grpc');
+  }
 }
 
 async function decodeAndPatchRequestBody(source, requestId, recordId, typeInfo, contentType) {
@@ -764,9 +780,18 @@ async function handleLoadingFinished(source, params) {
   const request = networkRequests.get(key);
   if (!request?.endpoint) return;
   try {
+    const typeInfo = request.typeInfo ?? endpointTypes.get(endpointKey(source, request.endpoint));
+    if (!typeInfo) {
+      await patchRecord(source.tabId, request.recordId, {
+        status: 'finished',
+        responseReceivedAt: new Date().toISOString(),
+        duration: Date.now() - request.startedAt,
+      });
+      return;
+    }
     const body = await send(source, 'Network.getResponseBody', { requestId: params.requestId });
     const raw = decodeCdpBody(body?.body ?? '', Boolean(body?.base64Encoded));
-    const response = await decodeGrpcPayload(source, request.typeInfo, raw, request.contentType || request.requestContentType, 'response');
+    const response = await decodeGrpcPayload(source, typeInfo, raw, request.contentType || request.requestContentType, 'response');
     const patch = {
       status: 'finished',
       response,
@@ -960,6 +985,33 @@ function findKnownEndpoint(source, url) {
     if (pathname.endsWith(endpoint)) return endpoint;
   }
 }
+function enqueuePreCapturedCall(source, endpoint, call) {
+  const key = debuggerTargetKey(source);
+  const calls = preCapturedCalls.get(key) ?? [];
+  const now = Date.now();
+  const recentCalls = calls.filter((item) => now - item.capturedAt < 5000);
+  recentCalls.push({ ...call, endpoint, capturedAt: now });
+  preCapturedCalls.set(key, recentCalls);
+}
+function takePreCapturedCall(source, rawUrl) {
+  const key = debuggerTargetKey(source);
+  const calls = preCapturedCalls.get(key);
+  if (!calls?.length) return null;
+  let pathname;
+  try { pathname = new URL(rawUrl).pathname; } catch { pathname = rawUrl; }
+  const now = Date.now();
+  const matchIndex = calls.findIndex((call) => {
+    return now - call.capturedAt < 5000 && pathname.endsWith(call.endpoint);
+  });
+  if (matchIndex === -1) {
+    preCapturedCalls.set(key, calls.filter((call) => now - call.capturedAt < 5000));
+    return null;
+  }
+  const [call] = calls.splice(matchIndex, 1);
+  if (calls.length) preCapturedCalls.set(key, calls);
+  else preCapturedCalls.delete(key);
+  return call;
+}
 async function loadRecordsCache() {
   if (recordsCache) return recordsCache;
   if (!recordsLoad) {
@@ -1109,6 +1161,7 @@ function clearDecoderStateForTab(tabId) {
   const prefix = `${tabId}:`;
   for (const key of endpointTypes.keys()) if (key.startsWith(prefix)) endpointTypes.delete(key);
   for (const [key, request] of networkRequests) if (request.source.tabId === tabId) networkRequests.delete(key);
+  for (const key of preCapturedCalls.keys()) if (key.startsWith(prefix)) preCapturedCalls.delete(key);
   for (const key of processingTargets) if (key.startsWith(prefix)) processingTargets.delete(key);
 }
 function endpointKey(source, endpoint) { return `${source.tabId}:${source.sessionId ?? 'root'}:${endpoint}`; }
