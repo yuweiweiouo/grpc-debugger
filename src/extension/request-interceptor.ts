@@ -5,8 +5,12 @@
 
   if (window[STATE_KEY]) return;
 
-  const state = { enabled: false };
+  // document_start 先短暫擷取，等待背景依此 tab 的設定明確開啟或關閉。
+  const state = { enabled: true, configured: false };
   window[STATE_KEY] = state;
+  setTimeout(() => {
+    if (!state.configured) state.enabled = false;
+  }, 1000);
 
   const xhrInfo = new WeakMap();
   const originalFetch = window.fetch;
