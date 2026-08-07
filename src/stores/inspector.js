@@ -5,6 +5,9 @@ export const activeTabId = writable(null);
 export const monitoring = writable(false);
 export const urlFilter = writable('');
 export const inspectorError = writable('');
+export const requestDetectionEnabled = writable(false);
+export const protoDetectionEnabled = writable(false);
+export const detectionUpdating = writable(false);
 
 let refreshVersion = 0;
 const clearingTabIds = new Set();
@@ -37,7 +40,9 @@ export async function refreshInspector() {
 
     monitoring.set(Boolean(status.attached));
     urlFilter.set(status.urlFilter ?? '');
-    replaceInspectorLogs(records.records ?? [], status.hiddenServices ?? []);
+    requestDetectionEnabled.set(Boolean(status.requestDetectionEnabled));
+    protoDetectionEnabled.set(Boolean(status.protoDetectionEnabled));
+    await replaceInspectorLogs(records.records ?? [], status.hiddenServices ?? []);
     inspectorError.set('');
   } catch (error) {
     if (version !== refreshVersion) return;
@@ -46,25 +51,43 @@ export async function refreshInspector() {
 }
 
 export async function startInspector() {
-  try {
-    const tabId = await getCurrentTabId();
-    const filter = getStoreValue(urlFilter);
-    const result = await send({ type: 'start', tabId, urlFilter: filter.trim() });
-    monitoring.set(Boolean(result.attached));
-    inspectorError.set('');
-  } catch (error) {
-    inspectorError.set(error instanceof Error ? error.message : String(error));
-  }
+  return setDetectionMode(true, true);
 }
 
 export async function stopInspector() {
+  return setDetectionMode(false, false);
+}
+
+export async function setRequestDetection(enabled) {
+  return setDetectionMode(enabled, enabled && getStoreValue(protoDetectionEnabled));
+}
+
+export async function setProtoDetection(enabled) {
+  if (enabled && !getStoreValue(requestDetectionEnabled)) return;
+  return setDetectionMode(getStoreValue(requestDetectionEnabled), enabled);
+}
+
+async function setDetectionMode(requestEnabled, protoEnabled) {
+  detectionUpdating.set(true);
   try {
     const tabId = await getCurrentTabId();
-    await send({ type: 'stop', tabId });
-    monitoring.set(false);
+    const filter = getStoreValue(urlFilter);
+    const result = await send({
+      type: 'setDetectionMode',
+      tabId,
+      requestDetectionEnabled: requestEnabled,
+      protoDetectionEnabled: protoEnabled,
+      urlFilter: filter.trim(),
+    });
+    monitoring.set(Boolean(result.attached));
+    requestDetectionEnabled.set(Boolean(result.requestDetectionEnabled));
+    protoDetectionEnabled.set(Boolean(result.protoDetectionEnabled));
+    urlFilter.set(result.urlFilter ?? '');
     inspectorError.set('');
   } catch (error) {
     inspectorError.set(error instanceof Error ? error.message : String(error));
+  } finally {
+    detectionUpdating.set(false);
   }
 }
 

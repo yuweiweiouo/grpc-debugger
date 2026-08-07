@@ -1,0 +1,1 @@
+(()=>{var i="__GRPC_DEBUGGER_LIGHTWEIGHT_CALL__",d="__GRPC_DEBUGGER_LIGHTWEIGHT_BRIDGE__";window[d]||(window[d]=!0,window.addEventListener("message",e=>{e.source!==window||e.data?.type!==i||chrome.runtime.sendMessage({type:"lightweightPayload",payload:e.data.payload})}),chrome.runtime.sendMessage({type:"lightweightBridgeReady"}));})();

@@ -14,6 +14,10 @@ globalThis.localStorage = globalThis.localStorage || (() => {
 describe('inspector clearing', () => {
   let clearInspectorRecords;
   let activeTabId;
+  let setRequestDetection;
+  let setProtoDetection;
+  let requestDetectionEnabled;
+  let protoDetectionEnabled;
   let log;
   let selectedId;
   let resolveClear;
@@ -34,6 +38,15 @@ describe('inspector clearing', () => {
           if (message.type === 'records') {
             return Promise.resolve({ ok: true, records: [] });
           }
+          if (message.type === 'setDetectionMode') {
+            return Promise.resolve({
+              ok: true,
+              attached: message.protoDetectionEnabled,
+              urlFilter: message.urlFilter,
+              requestDetectionEnabled: message.requestDetectionEnabled,
+              protoDetectionEnabled: message.protoDetectionEnabled,
+            });
+          }
           return Promise.resolve({ ok: true });
         }),
       },
@@ -42,7 +55,14 @@ describe('inspector clearing', () => {
       },
     };
 
-    ({ clearInspectorRecords, activeTabId } = await import('../src/stores/inspector.js'));
+    ({
+      clearInspectorRecords,
+      activeTabId,
+      setRequestDetection,
+      setProtoDetection,
+      requestDetectionEnabled,
+      protoDetectionEnabled,
+    } = await import('../src/stores/inspector.js'));
     ({ log, selectedId } = await import('../src/stores/network.js'));
   });
 
@@ -70,5 +90,31 @@ describe('inspector clearing', () => {
     expect(get(log)).toEqual([{ id: 'record-1' }]);
     resolveClear({ ok: true });
     await clearing;
+  });
+
+  it('Proto 偵測依附於請求偵測開關', async () => {
+    await setRequestDetection(true);
+
+    expect(get(requestDetectionEnabled)).toBe(true);
+    expect(get(protoDetectionEnabled)).toBe(false);
+    expect(chrome.runtime.sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({
+      type: 'setDetectionMode',
+      requestDetectionEnabled: true,
+      protoDetectionEnabled: false,
+    }));
+
+    await setProtoDetection(true);
+
+    expect(get(protoDetectionEnabled)).toBe(true);
+    expect(chrome.runtime.sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({
+      type: 'setDetectionMode',
+      requestDetectionEnabled: true,
+      protoDetectionEnabled: true,
+    }));
+
+    await setRequestDetection(false);
+
+    expect(get(requestDetectionEnabled)).toBe(false);
+    expect(get(protoDetectionEnabled)).toBe(false);
   });
 });
