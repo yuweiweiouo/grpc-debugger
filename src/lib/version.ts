@@ -4,5 +4,5 @@
  * 這是版本號的唯一來源 (Single Source of Truth)。
  * 所有 UI 組件都應從這裡引用版本號。
  */
-export const APP_VERSION = '2.0.5';
+export const APP_VERSION = '2.0.6';
 export const APP_NAME = 'gRPC Debugger';
