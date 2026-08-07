@@ -37,7 +37,7 @@
         type="button"
         class="monitor-btn"
         class:stop={$requestDetectionEnabled}
-        disabled={$detectionUpdating}
+        disabled={$detectionUpdating && !$requestDetectionEnabled}
         title={$t("request_detection_desc")}
         aria-pressed={$requestDetectionEnabled}
         on:click={handleRequestDetection}
@@ -46,7 +46,7 @@
         type="button"
         class="monitor-btn"
         class:stop={$protoDetectionEnabled}
-        disabled={!$requestDetectionEnabled || $detectionUpdating}
+        disabled={!$requestDetectionEnabled || ($detectionUpdating && !$protoDetectionEnabled)}
         title={$t("proto_detection_desc")}
         aria-pressed={$protoDetectionEnabled}
         on:click={handleProtoDetection}
