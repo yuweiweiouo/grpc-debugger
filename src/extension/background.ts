@@ -14,6 +14,7 @@ const OBJECT_GROUP = 'protobuf-ts-inspector';
 const PAUSE_INSPECTION_BUDGET_MS = 350;
 const PAUSE_WATCHDOG_MS = 300;
 const INSPECTION_COMMAND_TIMEOUT_MS = 200;
+const NETWORK_BODY_COMMAND_TIMEOUT_MS = 5000;
 
 const processingTargets = new Set();
 const endpointTypes = new Map();
@@ -750,7 +751,7 @@ function handleRequestWillBeSent(source, params) {
 
 async function decodeAndPatchRequestBody(source, requestId, recordId, typeInfo, contentType) {
   try {
-    const postData = await send(source, 'Network.getRequestPostData', { requestId });
+    const postData = await sendNetworkCommand(source, 'Network.getRequestPostData', { requestId });
     const request = await decodeGrpcPayload(
       source,
       typeInfo,
@@ -789,7 +790,7 @@ async function handleLoadingFinished(source, params) {
       });
       return;
     }
-    const body = await send(source, 'Network.getResponseBody', { requestId: params.requestId });
+    const body = await sendNetworkCommand(source, 'Network.getResponseBody', { requestId: params.requestId });
     const raw = decodeCdpBody(body?.body ?? '', Boolean(body?.base64Encoded));
     const response = await decodeGrpcPayload(source, typeInfo, raw, request.contentType || request.requestContentType, 'response');
     const patch = {
@@ -1203,10 +1204,18 @@ async function resumeDebugger(source) {
 }
 
 function sendInspectionCommand(target, method, params) {
+  return sendCommandWithTimeout(target, method, params, INSPECTION_COMMAND_TIMEOUT_MS);
+}
+
+function sendNetworkCommand(target, method, params) {
+  return sendCommandWithTimeout(target, method, params, NETWORK_BODY_COMMAND_TIMEOUT_MS);
+}
+
+function sendCommandWithTimeout(target, method, params, timeoutMs) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
-      reject(new Error(`Timed out while inspecting ${method}`));
-    }, INSPECTION_COMMAND_TIMEOUT_MS);
+      reject(new Error(`Timed out while running ${method}`));
+    }, timeoutMs);
 
     send(target, method, params).then(
       (result) => {
