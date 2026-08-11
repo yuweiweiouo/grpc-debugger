@@ -15,6 +15,7 @@ const PAUSE_INSPECTION_BUDGET_MS = 350;
 const PAUSE_WATCHDOG_MS = 300;
 const INSPECTION_COMMAND_TIMEOUT_MS = 200;
 const NETWORK_BODY_COMMAND_TIMEOUT_MS = 5000;
+const RUNTIME_DECODE_COMMAND_TIMEOUT_MS = 5000;
 
 const processingTargets = new Set();
 const endpointTypes = new Map();
@@ -823,7 +824,7 @@ async function handleLoadingFailed(source, params) {
 }
 
 async function decodeMessageWithRuntime(source, objectId, bytes) {
-  const result = await send(source, 'Runtime.callFunctionOn', {
+  const result = await sendRuntimeDecodeCommand(source, 'Runtime.callFunctionOn', {
     objectId,
     functionDeclaration: `function (base64) {
       const binary = atob(base64); const bytes = new Uint8Array(binary.length);
@@ -839,7 +840,7 @@ async function decodeMessageWithRuntime(source, objectId, bytes) {
 }
 
 async function decodeGrpcWebResponse(source, methodDescriptorId, bytes) {
-  const result = await send(source, 'Runtime.callFunctionOn', {
+  const result = await sendRuntimeDecodeCommand(source, 'Runtime.callFunctionOn', {
     objectId: methodDescriptorId,
     functionDeclaration: `function (base64) {
       const binary = atob(base64);
@@ -856,7 +857,7 @@ async function decodeGrpcWebResponse(source, methodDescriptorId, bytes) {
 }
 
 async function decodeGrpcWebRequest(source, inputTypeId, bytes) {
-  const result = await send(source, 'Runtime.callFunctionOn', {
+  const result = await sendRuntimeDecodeCommand(source, 'Runtime.callFunctionOn', {
     objectId: inputTypeId,
     functionDeclaration: `function (base64) {
       const binary = atob(base64);
@@ -1209,6 +1210,10 @@ function sendInspectionCommand(target, method, params) {
 
 function sendNetworkCommand(target, method, params) {
   return sendCommandWithTimeout(target, method, params, NETWORK_BODY_COMMAND_TIMEOUT_MS);
+}
+
+function sendRuntimeDecodeCommand(target, method, params) {
+  return sendCommandWithTimeout(target, method, params, RUNTIME_DECODE_COMMAND_TIMEOUT_MS);
 }
 
 function sendCommandWithTimeout(target, method, params, timeoutMs) {
