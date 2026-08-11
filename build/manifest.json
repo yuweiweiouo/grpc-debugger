@@ -1,6 +1,6 @@
 {
   "name": "gRPC Debugger",
-  "version": "2.0.5",
+  "version": "2.0.6",
   "manifest_version": 3,
   "description": "Inspect protobuf-ts gRPC-Web calls with the runtime metadata already present in the page.",
   "author": "魚尾尾",
@@ -26,13 +26,21 @@
   ],
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
-      "js": ["request-bridge.js"],
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "request-bridge.js"
+      ],
       "run_at": "document_start"
     },
     {
-      "matches": ["<all_urls>"],
-      "js": ["request-interceptor.js"],
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "request-interceptor.js"
+      ],
       "world": "MAIN",
       "run_at": "document_start"
     }
