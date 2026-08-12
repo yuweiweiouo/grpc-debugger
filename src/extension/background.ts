@@ -762,6 +762,7 @@ async function decodeAndPatchRequestBody(source, requestId, recordId, typeInfo, 
     );
     await patchRecord(source.tabId, recordId, { request });
   } catch (error) {
+    logRecordFailure('request decode', source, { requestId, recordId }, error);
     await patchRecord(source.tabId, recordId, { requestError: error instanceof Error ? error.message : String(error) });
   }
 }
@@ -802,6 +803,7 @@ async function handleLoadingFinished(source, params) {
     };
     await patchRecord(source.tabId, request.recordId, patch);
   } catch (error) {
+    logRecordFailure('response decode', source, request, error);
     await patchRecord(source.tabId, request.recordId, {
       status: 'finished',
       duration: Date.now() - request.startedAt,
@@ -815,11 +817,14 @@ async function handleLoadingFinished(source, params) {
 async function handleLoadingFailed(source, params) {
   const key = networkRequestKey(source, params?.requestId);
   const request = networkRequests.get(key);
-  if (request) await patchRecord(source.tabId, request.recordId, {
-    status: 'finished',
-    duration: Date.now() - request.startedAt,
-    responseError: params?.errorText || '網路請求失敗',
-  });
+  if (request) {
+    logRecordFailure('network failure', source, request, params?.errorText || '網路請求失敗');
+    await patchRecord(source.tabId, request.recordId, {
+      status: 'finished',
+      duration: Date.now() - request.startedAt,
+      responseError: params?.errorText || '網路請求失敗',
+    });
+  }
   networkRequests.delete(key);
 }
 
@@ -1149,7 +1154,9 @@ function addRecord(record) {
 function patchRecord(tabId, id, patch) {
   return mutateRecords(tabId, (records) => records.map((record) => {
     return record.id === id ? { ...record, ...patch } : record;
-  }));
+  })).then(() => {
+    chrome.runtime.sendMessage({ type: 'inspectorRecordAdded', tabId }).catch(() => {});
+  });
 }
 async function getRecords(tabId) { await recordMutation; return [...((await loadRecordsCache())[tabId] ?? [])]; }
 async function clearRecords(tabId) { await mutateRecords(tabId, () => []); await flushRecords(); }
@@ -1196,6 +1203,17 @@ function isServiceHidden(tabId, rawUrl) {
 }
 function send(target, method, params) { return chrome.debugger.sendCommand(target, method, params); }
 
+function logRecordFailure(phase, source, request, error) {
+  console.warn('[gRPC Debugger] Request processing failed', {
+    phase,
+    tabId: source?.tabId,
+    requestId: request?.requestId,
+    endpoint: request?.endpoint,
+    url: request?.url,
+    error: error instanceof Error ? error.message : String(error),
+  });
+}
+
 async function resumeDebugger(source) {
   try {
     await send(source, 'Debugger.resume');
@@ -1219,7 +1237,13 @@ function sendRuntimeDecodeCommand(target, method, params) {
 function sendCommandWithTimeout(target, method, params, timeoutMs) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
-      reject(new Error(`Timed out while running ${method}`));
+      const error = new Error(`Timed out while running ${method}`);
+      console.warn('[gRPC Debugger] CDP command timed out', {
+        tabId: target?.tabId,
+        method,
+        timeoutMs,
+      });
+      reject(error);
     }, timeoutMs);
 
     send(target, method, params).then(
